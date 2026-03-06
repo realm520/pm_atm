@@ -24,8 +24,18 @@ class PolymarketClient:
         resp.raise_for_status()
         return resp.json()
 
-    def list_markets(self, limit: int = 50, active: bool = True) -> list[dict[str, Any]]:
-        params = {"limit": limit, "active": str(active).lower()}
+    def list_markets(
+        self,
+        limit: int = 50,
+        active: bool = True,
+        closed: bool | None = None,
+        order: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": limit, "active": str(active).lower()}
+        if closed is not None:
+            params["closed"] = str(closed).lower()
+        if order:
+            params["order"] = order
         data = self._get("markets", params=params)
         return data if isinstance(data, list) else data.get("markets", [])
 
@@ -35,7 +45,17 @@ class PolymarketClient:
     def market_price(self, market_id: str) -> float:
         market = self.get_market(market_id)
         # 兼容不同字段名
-        for key in ("lastTradePrice", "last_trade_price", "outcomePrice", "price"):
-            if key in market:
-                return float(market[key])
+        for key in ("lastTradePrice", "last_trade_price", "outcomePrice", "price", "bestAsk", "bestBid"):
+            v = market.get(key)
+            if v is not None:
+                return float(v)
+
+        outcome_prices = market.get("outcomePrices")
+        if isinstance(outcome_prices, str) and outcome_prices:
+            import json
+
+            parsed = json.loads(outcome_prices)
+            if isinstance(parsed, list) and parsed:
+                return float(parsed[0])
+
         raise ValueError(f"No price field found for market {market_id}")

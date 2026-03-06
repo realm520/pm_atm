@@ -29,6 +29,7 @@ src/weather_arb/
 scripts/
   run_backtest.py
   run_live_paper.py
+  smoke_interfaces.py
 tests/unit/
   test_strategy_smoke.py
   test_execution_risk.py
@@ -66,6 +67,14 @@ uv run python scripts/run_live_paper.py --mode poll --market-id <MARKET_ID> --po
 
 ```bash
 uv run python scripts/run_live_paper.py --mode ws --ws-url <WS_URL> --subscribe-json '{"type":"subscribe"}'
+```
+
+## 接口冒烟测试（推荐先跑）
+
+```bash
+uv run python scripts/smoke_interfaces.py --ticks 5
+# 或指定市场
+uv run python scripts/smoke_interfaces.py --market-id 531202 --ticks 5
 ```
 
 ## 注意
