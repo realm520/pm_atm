@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -10,27 +11,36 @@ from typing import Any
 from weather_arb.event_mapping import build_event_map_from_markets
 from weather_arb.polymarket import PolymarketClient
 
-WEATHER_HINTS = [
-    "weather",
-    "temperature",
-    "temp",
-    "snow",
-    "snowfall",
-    "rain",
-    "rainfall",
-    "precip",
-    "precipitation",
-    "frost",
-    "freeze",
-    "heat",
-    "humid",
-    "wind",
+WEATHER_PATTERNS = [
+    r"\bweather\b",
+    r"\btemperature\b",
+    r"\btemp\b",
+    r"\bsnow\b",
+    r"\bsnowfall\b",
+    r"\brain\b",
+    r"\brainfall\b",
+    r"\bprecip\w*\b",
+    r"\bfrost\b",
+    r"\bfreeze\b",
+    r"\bhumid\w*\b",
+    r"\bwind\w*\b",
+    r"\bhurricane\b",
+    r"\btyphoon\b",
+    r"\bstorm\b",
+    r"\bheat index\b",
+    r"\bheatwave\b",
+]
+
+NON_WEATHER_PATTERNS = [
+    r"\bmiami heat\b",
 ]
 
 
 def is_weather_market(question: str) -> bool:
     q = (question or "").lower()
-    return any(k in q for k in WEATHER_HINTS)
+    if any(re.search(p, q) for p in NON_WEATHER_PATTERNS):
+        return False
+    return any(re.search(p, q) for p in WEATHER_PATTERNS)
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -46,13 +56,30 @@ def save_json(path: Path, data: dict[str, Any]) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def fetch_open_markets(client: PolymarketClient, limit: int) -> list[dict[str, Any]]:
-    return client.list_markets(limit=limit, active=True, closed=False)
+def fetch_open_markets(client: PolymarketClient, limit: int, page_size: int = 500) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    offset = 0
+
+    while True:
+        if limit > 0 and len(out) >= limit:
+            break
+
+        batch_size = page_size if limit <= 0 else min(page_size, limit - len(out))
+        page = client.list_markets(limit=batch_size, offset=offset, active=True, closed=False)
+        if not page:
+            break
+
+        out.extend(page)
+        if len(page) < batch_size:
+            break
+        offset += len(page)
+
+    return out
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Scan open weather markets and maintain generated weather config")
-    parser.add_argument("--limit", type=int, default=500, help="How many open markets to scan")
+    parser.add_argument("--limit", type=int, default=0, help="How many open markets to scan (0 = all)")
     parser.add_argument("--config", default="config/weather_events.generated.json", help="Main generated config path")
     parser.add_argument("--state", default="config/weather_scan_state.json", help="Scanner state path")
     parser.add_argument("--snapshot-dir", default="config/snapshots", help="Versioned snapshot folder")
@@ -106,7 +133,7 @@ def main() -> None:
     save_json(state_path, new_state)
 
     print(
-        f"mode={new_state['mode']} open_weather={len(current_ids)} newly_seen={len(newly_seen)} "
+        f"mode={new_state['mode']} scanned_open={len(all_open)} open_weather={len(current_ids)} newly_seen={len(newly_seen)} "
         f"mapped={len(mapped)} config_total={len(merged)}"
     )
     print(f"config={config_path}")

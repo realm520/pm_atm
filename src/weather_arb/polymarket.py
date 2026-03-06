@@ -30,12 +30,15 @@ class PolymarketClient:
         active: bool = True,
         closed: bool | None = None,
         order: str | None = None,
+        offset: int | None = None,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {"limit": limit, "active": str(active).lower()}
         if closed is not None:
             params["closed"] = str(closed).lower()
         if order:
             params["order"] = order
+        if offset is not None:
+            params["offset"] = offset
         data = self._get("markets", params=params)
         return data if isinstance(data, list) else data.get("markets", [])
 
