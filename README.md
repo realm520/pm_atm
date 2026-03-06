@@ -28,8 +28,8 @@ tests/unit/
 ## 运行
 
 ```bash
-pip install pandas numpy requests pytest
-PYTHONPATH=src python scripts/run_backtest.py --input weather_market_data.csv --out-dir outputs
+uv sync --dev
+uv run python scripts/run_backtest.py --input weather_market_data.csv --out-dir outputs
 ```
 
 ## 输入 CSV 最少字段
