@@ -10,6 +10,9 @@
 - walk-forward 回测
 - 参数网格搜索
 - Polymarket 只读市场数据客户端（发现+快照）
+- 实时轮询流（可替换为 WS）
+- 执行层滑点模型（盘口深度 + 冲击）
+- 风控层（持仓数、单事件、组合敞口、日内止损）
 
 ## 目录
 
@@ -19,10 +22,16 @@ src/weather_arb/
   strategy.py
   validation.py
   polymarket.py
+  realtime.py
+  execution.py
+  risk.py
+  engine.py
 scripts/
   run_backtest.py
 tests/unit/
   test_strategy_smoke.py
+  test_execution_risk.py
+  test_engine_smoke.py
 ```
 
 ## 运行
