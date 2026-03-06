@@ -1,6 +1,7 @@
 """Weather mispricing arbitrage research toolkit."""
 
 from .engine import EngineConfig, PaperArbEngine
+from .event_mapping import GeoCoder, build_event_map_from_markets, infer_weather_config_from_question
 from .execution import ExecutionConfig, SlippageModel
 from .live import LivePaperRunner, LiveRunnerConfig, StaticForecastProvider
 from .model_ensemble import DynamicModelEnsembler, EnsembleWeightConfig
@@ -24,4 +25,7 @@ __all__ = [
     "StaticForecastProvider",
     "WeatherEventConfig",
     "OpenMeteoMultiModelProvider",
+    "GeoCoder",
+    "infer_weather_config_from_question",
+    "build_event_map_from_markets",
 ]

@@ -32,6 +32,7 @@ scripts/
   run_backtest.py
   run_live_paper.py
   smoke_interfaces.py
+  generate_weather_config.py
 tests/unit/
   test_strategy_smoke.py
   test_execution_risk.py
@@ -66,7 +67,7 @@ uv run python scripts/run_backtest.py --input weather_market_data.csv --out-dir 
 uv run python scripts/run_live_paper.py --mode poll --market-id <MARKET_ID> --poll-interval 2 --eval-every 10
 
 # 接入 Open-Meteo 天气事件配置
-uv run python scripts/run_live_paper.py --mode poll --market-id <MARKET_ID> --weather-config config/weather_events.example.json
+uv run python scripts/run_live_paper.py --mode poll --market-id <MARKET_ID> --weather-config config/weather_events.generated.json
 ```
 
 ## 实时纸交易（WebSocket）
@@ -81,6 +82,16 @@ uv run python scripts/run_live_paper.py --mode ws --ws-url <WS_URL> --subscribe-
 uv run python scripts/smoke_interfaces.py --ticks 5
 # 或指定市场
 uv run python scripts/smoke_interfaces.py --market-id 531202 --ticks 5
+```
+
+## 自动生成天气事件配置（从 market question 推断）
+
+```bash
+# 扫描开放市场并生成配置
+uv run python scripts/generate_weather_config.py --limit 100 --out config/weather_events.generated.json
+
+# 或指定市场ID
+uv run python scripts/generate_weather_config.py --market-id 531202 --out config/weather_events.generated.json
 ```
 
 ## 注意
