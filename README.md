@@ -28,6 +28,7 @@ src/weather_arb/
   engine.py
 scripts/
   run_backtest.py
+  run_live_paper.py
 tests/unit/
   test_strategy_smoke.py
   test_execution_risk.py
@@ -54,6 +55,18 @@ uv run python scripts/run_backtest.py --input weather_market_data.csv --out-dir 
 - `outputs/trades.csv`
 - `outputs/walk_forward.csv`
 - `outputs/grid_search.csv`
+
+## 实时纸交易（轮询）
+
+```bash
+uv run python scripts/run_live_paper.py --mode poll --market-id <MARKET_ID> --poll-interval 2 --eval-every 10
+```
+
+## 实时纸交易（WebSocket）
+
+```bash
+uv run python scripts/run_live_paper.py --mode ws --ws-url <WS_URL> --subscribe-json '{"type":"subscribe"}'
+```
 
 ## 注意
 
