@@ -6,6 +6,7 @@ from .live import LivePaperRunner, LiveRunnerConfig, StaticForecastProvider
 from .model_ensemble import DynamicModelEnsembler, EnsembleWeightConfig
 from .risk import RiskConfig, RiskManager
 from .strategy import StrategyConfig, WeatherMispricingStrategy
+from .weather_provider import OpenMeteoMultiModelProvider, WeatherEventConfig
 
 __all__ = [
     "StrategyConfig",
@@ -21,4 +22,6 @@ __all__ = [
     "LiveRunnerConfig",
     "LivePaperRunner",
     "StaticForecastProvider",
+    "WeatherEventConfig",
+    "OpenMeteoMultiModelProvider",
 ]

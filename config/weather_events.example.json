@@ -1,0 +1,10 @@
+{
+  "531202": {
+    "latitude": 41.8781,
+    "longitude": -87.6298,
+    "variable": "snowfall",
+    "threshold": 5.0,
+    "direction": "above",
+    "horizon_hours": 24
+  }
+}

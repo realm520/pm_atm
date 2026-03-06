@@ -26,6 +26,8 @@ src/weather_arb/
   execution.py
   risk.py
   engine.py
+config/
+  weather_events.example.json
 scripts/
   run_backtest.py
   run_live_paper.py
@@ -60,7 +62,11 @@ uv run python scripts/run_backtest.py --input weather_market_data.csv --out-dir 
 ## 实时纸交易（轮询）
 
 ```bash
+# 静态概率（默认）
 uv run python scripts/run_live_paper.py --mode poll --market-id <MARKET_ID> --poll-interval 2 --eval-every 10
+
+# 接入 Open-Meteo 天气事件配置
+uv run python scripts/run_live_paper.py --mode poll --market-id <MARKET_ID> --weather-config config/weather_events.example.json
 ```
 
 ## 实时纸交易（WebSocket）

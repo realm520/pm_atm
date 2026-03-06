@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import argparse
 
+import json
+
 from weather_arb.engine import PaperArbEngine
 from weather_arb.live import LivePaperRunner, LiveRunnerConfig, StaticForecastProvider, run_async
 from weather_arb.realtime import PollingMarketStreamer, RealtimeConfig, WebSocketMarketStreamer
+from weather_arb.weather_provider import OpenMeteoMultiModelProvider, WeatherEventConfig
 
 
 def main() -> None:
@@ -18,12 +21,24 @@ def main() -> None:
     parser.add_argument("--poll-interval", type=float, default=2.0)
     parser.add_argument("--out-csv", default="outputs/live_trades.csv")
     parser.add_argument("--static-prob", type=float, default=0.55, help="Fallback model probability")
+    parser.add_argument("--weather-config", default="", help="JSON file: {market_id: {latitude, longitude, variable, threshold, direction, horizon_hours}}")
     args = parser.parse_args()
 
     engine = PaperArbEngine()
+
+    forecast_provider = StaticForecastProvider(args.static_prob)
+    if args.weather_config:
+        with open(args.weather_config, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        event_map = {
+            str(k): WeatherEventConfig(**v)
+            for k, v in raw.items()
+        }
+        forecast_provider = OpenMeteoMultiModelProvider(event_map=event_map)
+
     runner = LivePaperRunner(
         engine=engine,
-        forecast_provider=StaticForecastProvider(args.static_prob),
+        forecast_provider=forecast_provider,
         config=LiveRunnerConfig(eval_every_ticks=args.eval_every, out_csv=args.out_csv),
     )
 
