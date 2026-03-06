@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+config/snapshots/
+config/weather_events.generated.json
+config/weather_scan_state.json
+config/*.log

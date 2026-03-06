@@ -33,6 +33,8 @@ scripts/
   run_live_paper.py
   smoke_interfaces.py
   generate_weather_config.py
+  scan_all_weather_markets.py
+  install_weather_scan_cron.sh
 tests/unit/
   test_strategy_smoke.py
   test_execution_risk.py
@@ -92,6 +94,28 @@ uv run python scripts/generate_weather_config.py --limit 100 --out config/weathe
 
 # 或指定市场ID
 uv run python scripts/generate_weather_config.py --market-id 531202 --out config/weather_events.generated.json
+```
+
+## 全量/增量扫描（生产建议）
+
+```bash
+# 全量重建（建议每天1次）
+uv run python scripts/scan_all_weather_markets.py --full --limit 1000
+
+# 增量更新（建议每10分钟）
+uv run python scripts/scan_all_weather_markets.py --limit 1000
+```
+
+会输出：
+- `config/weather_events.generated.json`（当前有效配置）
+- `config/weather_scan_state.json`（扫描状态）
+- `config/snapshots/weather_events.<timestamp>.json`（版本快照）
+
+## 安装定时任务（cron）
+
+```bash
+bash scripts/install_weather_scan_cron.sh
+crontab -l | grep scan_all_weather_markets.py
 ```
 
 ## 注意
