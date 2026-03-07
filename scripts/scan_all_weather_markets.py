@@ -42,27 +42,34 @@ NON_WEATHER_PATTERNS = [
 ]
 
 
-def is_weather_market(question: str) -> bool:
+def classify_weather_market(question: str) -> tuple[bool, str]:
     q = (question or "").lower()
     if any(re.search(p, q) for p in NON_WEATHER_PATTERNS):
-        return False
+        return False, "non_weather_false_positive"
 
     has_weather_term = any(re.search(p, q) for p in WEATHER_PATTERNS)
     if not has_weather_term:
-        return False
+        return False, "no_weather_term"
 
     # stronger confidence for temp/precip contracts: place + numeric/unit cues
     has_measurement = bool(re.search(r"(-?\d+(?:\.\d+)?)\s*(°?c|°?f|ºc|ºf|inches|inch|mm)", q))
     has_place_hint = any(k in q for k in [" in ", " nyc", " london", " paris", " seattle", " tokyo", " sao paulo", " us "])
 
     if any(k in q for k in ["temperature", "snow", "rain", "precip"]):
-        return has_measurement or has_place_hint
+        if has_measurement or has_place_hint:
+            return True, "temp_precip_with_context"
+        return False, "temp_precip_missing_measurement_or_place"
 
     # hurricane/named-storm contracts may not have measurements
     if any(k in q for k in ["hurricane", "typhoon", "named storm", "wind speed"]):
-        return True
+        return True, "storm_or_wind_market"
 
-    return False
+    return False, "weather_term_but_low_confidence"
+
+
+def is_weather_market(question: str) -> bool:
+    ok, _ = classify_weather_market(question)
+    return ok
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -78,7 +85,7 @@ def save_json(path: Path, data: dict[str, Any]) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def fetch_open_markets(client: PolymarketClient, limit: int, page_size: int = 500) -> list[dict[str, Any]]:
+def fetch_open_markets(client: PolymarketClient, limit: int, page_size: int = 500, verbose: bool = False) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     offset = 0
 
@@ -87,7 +94,15 @@ def fetch_open_markets(client: PolymarketClient, limit: int, page_size: int = 50
             break
 
         batch_size = page_size if limit <= 0 else min(page_size, limit - len(out))
-        page = client.list_markets(limit=batch_size, offset=offset, active=True, closed=False)
+        try:
+            page = client.list_markets(limit=batch_size, offset=offset, active=True, closed=False)
+        except Exception as exc:
+            print(f"[scan][error] list_markets failed offset={offset} batch_size={batch_size}: {type(exc).__name__}: {exc}")
+            break
+
+        if verbose:
+            print(f"[scan] fetched page offset={offset} requested={batch_size} got={len(page)}")
+
         if not page:
             break
 
@@ -106,6 +121,9 @@ def main() -> None:
     parser.add_argument("--state", default="config/weather_scan_state.json", help="Scanner state path")
     parser.add_argument("--snapshot-dir", default="config/snapshots", help="Versioned snapshot folder")
     parser.add_argument("--full", action="store_true", help="Full rebuild: replace config from current open weather markets")
+    parser.add_argument("--verbose", action="store_true", help="Print diagnostics for why markets were/weren't classified as weather")
+    parser.add_argument("--sample", type=int, default=10, help="How many sample rows to print in verbose mode")
+    parser.add_argument("--allow-empty-full", action="store_true", help="Allow full mode to overwrite config with empty result")
     args = parser.parse_args()
 
     client = PolymarketClient()
@@ -113,8 +131,25 @@ def main() -> None:
     state_path = Path(args.state)
     snapshot_dir = Path(args.snapshot_dir)
 
-    all_open = fetch_open_markets(client, args.limit)
-    weather_open = [m for m in all_open if is_weather_market(str(m.get("question") or ""))]
+    all_open = fetch_open_markets(client, args.limit, verbose=args.verbose)
+
+    weather_open: list[dict[str, Any]] = []
+    reason_counts: dict[str, int] = {}
+    rejected_samples: list[tuple[str, str, str]] = []
+    accepted_samples: list[tuple[str, str, str]] = []
+
+    for m in all_open:
+        mid = str(m.get("id") or "")
+        q = str(m.get("question") or "")
+        ok, reason = classify_weather_market(q)
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        if ok:
+            weather_open.append(m)
+            if len(accepted_samples) < args.sample:
+                accepted_samples.append((mid, reason, q))
+        else:
+            if len(rejected_samples) < args.sample:
+                rejected_samples.append((mid, reason, q))
 
     existing_cfg = load_json(config_path)
     state = load_json(state_path)
@@ -131,7 +166,11 @@ def main() -> None:
     mapped = build_event_map_from_markets(targets)
 
     if args.full:
-        merged = mapped
+        if not mapped and existing_cfg and not args.allow_empty_full:
+            print("[scan][warn] full mode produced 0 mapped markets; keeping existing config. Use --allow-empty-full to overwrite.")
+            merged = dict(existing_cfg)
+        else:
+            merged = mapped
     else:
         merged = dict(existing_cfg)
         merged.update(mapped)
@@ -161,6 +200,19 @@ def main() -> None:
     print(f"config={config_path}")
     print(f"snapshot={snapshot_path}")
     print(f"state={state_path}")
+
+    if args.verbose:
+        print("[scan][diag] classification reason counts:")
+        for k in sorted(reason_counts.keys()):
+            print(f"  - {k}: {reason_counts[k]}")
+
+        print(f"[scan][diag] accepted samples (top {len(accepted_samples)}):")
+        for mid, reason, q in accepted_samples:
+            print(f"  + id={mid} reason={reason} q={q[:180]}")
+
+        print(f"[scan][diag] rejected samples (top {len(rejected_samples)}):")
+        for mid, reason, q in rejected_samples:
+            print(f"  - id={mid} reason={reason} q={q[:180]}")
 
 
 if __name__ == "__main__":
