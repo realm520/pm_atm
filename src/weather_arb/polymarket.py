@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Any
 
 import requests
@@ -55,10 +56,19 @@ class PolymarketClient:
 
         outcome_prices = market.get("outcomePrices")
         if isinstance(outcome_prices, str) and outcome_prices:
-            import json
-
             parsed = json.loads(outcome_prices)
             if isinstance(parsed, list) and parsed:
                 return float(parsed[0])
 
         raise ValueError(f"No price field found for market {market_id}")
+
+    def market_token_ids(self, market_id: str) -> list[str]:
+        market = self.get_market(market_id)
+        raw = market.get("clobTokenIds")
+        if isinstance(raw, str) and raw:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [str(x) for x in parsed]
+        if isinstance(raw, list):
+            return [str(x) for x in raw]
+        return []
