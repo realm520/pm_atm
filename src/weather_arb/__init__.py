@@ -8,6 +8,8 @@ from .exchange_sim import SimExchangeExecutor
 from .live import LivePaperRunner, LiveRunnerConfig, StaticForecastProvider
 from .order_store import SqliteOrderStore
 from .orders import ExecutionIntent, Fill, OrderRecord, OrderSide, OrderStatus
+from .polymarket_account import PolymarketAccount, PolymarketAccountManager, PolymarketApiCreds
+from .polymarket_direct_trader import DirectOrderRequest, PolymarketDirectTrader
 from .polymarket_executor import PolymarketExecutionConfig, PolymarketLiveExecutor
 from .model_ensemble import DynamicModelEnsembler, EnsembleWeightConfig
 from .risk import RiskConfig, RiskManager
@@ -39,6 +41,11 @@ __all__ = [
     "SimExchangeExecutor",
     "PolymarketExecutionConfig",
     "PolymarketLiveExecutor",
+    "PolymarketApiCreds",
+    "PolymarketAccount",
+    "PolymarketAccountManager",
+    "DirectOrderRequest",
+    "PolymarketDirectTrader",
     "WeatherEventConfig",
     "OpenMeteoMultiModelProvider",
     "GeoCoder",

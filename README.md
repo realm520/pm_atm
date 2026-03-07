@@ -187,6 +187,38 @@ bash scripts/install_weather_scan_cron.sh
 crontab -l | grep scan_all_weather_markets.py
 ```
 
+## Polymarket 账号注册/管理与程序化下单
+
+说明：Polymarket 不是传统用户名注册接口，采用钱包签名体系。
+“注册管理”在程序侧等价为：
+1) 使用私钥完成 L1 认证
+2) 创建或派生 L2 API 凭证（apiKey/secret/passphrase）
+3) 本地安全保存账号配置并用于下单
+
+脚本：`scripts/manage_polymarket_account.py`
+
+```bash
+# 1) 初始化账号（创建/派生 API 凭证）
+export POLY_PRIVATE_KEY='0x...'
+uv run python scripts/manage_polymarket_account.py init \
+  --name main \
+  --wallet-address 0xYourWallet \
+  --funder 0xYourFunder \
+  --signature-type 2 \
+  --nonce 0
+
+# 2) 查看已管理账号
+uv run python scripts/manage_polymarket_account.py list
+
+# 3) 程序化下单
+uv run python scripts/manage_polymarket_account.py place-order \
+  --name main \
+  --token-id <TOKEN_ID> \
+  --price 0.45 \
+  --size 5 \
+  --side BUY
+```
+
 ## 注意
 
 这是研究框架，不构成投资建议。实盘前请补齐：
