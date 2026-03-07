@@ -54,8 +54,6 @@ def main() -> None:
 
     subscribe_message = None
     if args.subscribe_json:
-        import json
-
         subscribe_message = json.loads(args.subscribe_json)
 
     ws_streamer = WebSocketMarketStreamer(ws_url=args.ws_url, subscribe_message=subscribe_message)
