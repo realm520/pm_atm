@@ -12,7 +12,7 @@ from weather_arb.event_mapping import build_event_map_from_markets
 from weather_arb.polymarket import PolymarketClient
 
 WEATHER_PATTERNS = [
-    r"\bweather\b",
+    r"\bhighest temperature\b",
     r"\btemperature\b",
     r"\btemp\b",
     r"\bsnow\b",
@@ -20,19 +20,25 @@ WEATHER_PATTERNS = [
     r"\brain\b",
     r"\brainfall\b",
     r"\bprecip\w*\b",
-    r"\bfrost\b",
-    r"\bfreeze\b",
-    r"\bhumid\w*\b",
-    r"\bwind\w*\b",
-    r"\bhurricane\b",
-    r"\btyphoon\b",
-    r"\bstorm\b",
+    r"\bhumidity\b",
     r"\bheat index\b",
     r"\bheatwave\b",
+    r"\bhurricane\b",
+    r"\btyphoon\b",
+    r"\bnamed storm\b",
+    r"\bwind speed\b",
 ]
 
+# common false positives from sports/people/movie titles/politics
 NON_WEATHER_PATTERNS = [
     r"\bmiami heat\b",
+    r"\bred storm\b",
+    r"\bgolden hurricane\b",
+    r"\bjonas wind\b",
+    r"\bwinds of winter\b",
+    r"\bcharacter of rain\b",
+    r"\bfreeze .* rents\b",
+    r"\bjacob frost\b",
 ]
 
 
@@ -40,7 +46,23 @@ def is_weather_market(question: str) -> bool:
     q = (question or "").lower()
     if any(re.search(p, q) for p in NON_WEATHER_PATTERNS):
         return False
-    return any(re.search(p, q) for p in WEATHER_PATTERNS)
+
+    has_weather_term = any(re.search(p, q) for p in WEATHER_PATTERNS)
+    if not has_weather_term:
+        return False
+
+    # stronger confidence for temp/precip contracts: place + numeric/unit cues
+    has_measurement = bool(re.search(r"(-?\d+(?:\.\d+)?)\s*(°?c|°?f|ºc|ºf|inches|inch|mm)", q))
+    has_place_hint = any(k in q for k in [" in ", " nyc", " london", " paris", " seattle", " tokyo", " sao paulo", " us "])
+
+    if any(k in q for k in ["temperature", "snow", "rain", "precip"]):
+        return has_measurement or has_place_hint
+
+    # hurricane/named-storm contracts may not have measurements
+    if any(k in q for k in ["hurricane", "typhoon", "named storm", "wind speed"]):
+        return True
+
+    return False
 
 
 def load_json(path: Path) -> dict[str, Any]:

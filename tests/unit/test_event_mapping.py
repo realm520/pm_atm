@@ -12,7 +12,25 @@ def test_infer_snow_question() -> None:
     assert cfg is not None
     assert cfg.variable == "snowfall"
     assert cfg.direction == "above"
-    assert cfg.threshold == 10.0
+    assert abs(cfg.threshold - 25.4) < 1e-6  # inches -> cm
+
+
+def test_infer_nyc_precip_question() -> None:
+    q = "Will NYC have less than 2 inches of precipitation in March?"
+    cfg = infer_weather_config_from_question(q, geocoder=DummyGeo())
+    assert cfg is not None
+    assert cfg.variable == "precipitation"
+    assert cfg.direction == "below"
+    assert abs(cfg.threshold - 50.8) < 1e-6  # inches -> mm
+
+
+def test_infer_london_temp_question() -> None:
+    q = "Will the highest temperature in London be 17°C on March 6?"
+    cfg = infer_weather_config_from_question(q, geocoder=DummyGeo())
+    assert cfg is not None
+    assert cfg.variable == "temperature_2m"
+    assert cfg.direction == "above"
+    assert abs(cfg.threshold - 17.0) < 1e-6
 
 
 def test_build_event_map() -> None:
