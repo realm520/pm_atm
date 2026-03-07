@@ -16,6 +16,11 @@ class ForecastProvider(Protocol):
     def get_probabilities(self, event_id: str, tick: dict[str, Any]) -> dict[str, float]: ...
 
 
+class ExecutionHealthProvider(Protocol):
+    def refresh_recent(self, limit: int = 200) -> list[Any]: ...
+    def risk_flags(self, minutes: int = 5) -> dict[str, bool | float | int]: ...
+
+
 class CircuitBreakerTriggered(RuntimeError):
     """Raised when runtime guardrails halt the live runner."""
 
@@ -72,9 +77,11 @@ class LivePaperRunner:
         engine: PaperArbEngine,
         forecast_provider: ForecastProvider,
         config: LiveRunnerConfig | None = None,
+        execution_service: ExecutionHealthProvider | None = None,
     ) -> None:
         self.engine = engine
         self.forecast_provider = forecast_provider
+        self.execution_service = execution_service
         self.cfg = config or LiveRunnerConfig()
         self.rows: list[dict[str, Any]] = []
         self.seen_trade_keys: set[str] = set()
@@ -169,6 +176,18 @@ class LivePaperRunner:
         self._append_event("circuit_breaker", {"reason": reason, **(payload or {})})
         raise CircuitBreakerTriggered(reason)
 
+    def _check_execution_health(self) -> None:
+        if self.execution_service is None:
+            return
+        self.execution_service.refresh_recent(limit=200)
+        flags = self.execution_service.risk_flags(minutes=5)
+        if bool(flags.get("reject_warn")):
+            self._append_alert("warning", "execution_reject_warn", f"reject_rate={float(flags.get('reject_rate', 0.0)):.2%}")
+        if bool(flags.get("reject_crit")):
+            self._append_alert("critical", "execution_reject_crit", f"reject_rate={float(flags.get('reject_rate', 0.0)):.2%}")
+        if bool(flags.get("hard_stop")):
+            self._trigger_circuit_breaker("execution_hard_stop", payload={"execution_flags": flags})
+
     def _append_summary_row(self, market_id: str, summary: dict[str, Any], n_new: int) -> None:
         out_path = Path(self.cfg.summary_csv)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -246,6 +265,8 @@ class LivePaperRunner:
                     "daily_loss_limit",
                     payload={"total_pnl": total_pnl, "hard_daily_loss_limit": self.cfg.hard_daily_loss_limit},
                 )
+
+            self._check_execution_health()
 
             self._safe_print(
                 f"[live] ticks={self.tick_count} trades={summary.get('n_trades', 0)} "

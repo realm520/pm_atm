@@ -9,6 +9,23 @@ import pytest
 from weather_arb.live import CircuitBreakerTriggered, LivePaperRunner, LiveRunnerConfig, StaticForecastProvider
 
 
+class DummyExecutionService:
+    def __init__(self, hard_stop: bool = False) -> None:
+        self.hard_stop = hard_stop
+
+    def refresh_recent(self, limit: int = 200):
+        return []
+
+    def risk_flags(self, minutes: int = 5):
+        return {
+            "reject_rate": 0.2 if self.hard_stop else 0.0,
+            "reject_warn": False,
+            "reject_crit": False,
+            "hard_stop": self.hard_stop,
+            "consecutive_rejected": 0,
+        }
+
+
 def test_live_runner_normalize_and_dump(tmp_path: Path) -> None:
     out_file = tmp_path / "live_trades.csv"
     summary_file = tmp_path / "live_summary.csv"
@@ -77,6 +94,25 @@ def test_live_runner_circuit_breaker_by_kill_switch(tmp_path: Path) -> None:
             alerts_jsonl=str(tmp_path / "alerts.jsonl"),
             kill_switch_path=str(kill),
         ),
+    )
+
+    with pytest.raises(CircuitBreakerTriggered):
+        asyncio.run(runner.on_tick({"id": "m1", "price": 0.52, "timestamp": "2026-01-01T00:00:00Z"}))
+
+
+def test_live_runner_circuit_breaker_by_execution_hard_stop(tmp_path: Path) -> None:
+    runner = LivePaperRunner(
+        engine=PaperArbEngine(),
+        forecast_provider=StaticForecastProvider(0.6),
+        config=LiveRunnerConfig(
+            eval_every_ticks=1,
+            out_csv=str(tmp_path / "live_trades.csv"),
+            summary_csv=str(tmp_path / "live_summary.csv"),
+            events_jsonl=str(tmp_path / "events.jsonl"),
+            error_log=str(tmp_path / "errors.log"),
+            alerts_jsonl=str(tmp_path / "alerts.jsonl"),
+        ),
+        execution_service=DummyExecutionService(hard_stop=True),
     )
 
     with pytest.raises(CircuitBreakerTriggered):

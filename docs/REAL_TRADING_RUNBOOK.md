@@ -12,6 +12,10 @@ export TG_BOT_TOKEN='<telegram-bot-token>'
 
 ```bash
 uv run python scripts/run_live_paper.py --mode ws \
+  --execution-mode live \
+  --orders-db state/orders.live.db \
+  --poly-exec-base-url "$POLY_EXEC_BASE_URL" \
+  --poly-exec-api-key "$POLY_EXEC_API_KEY" \
   --weather-config config/weather_events.generated.json \
   --all-from-weather-config \
   --strategy-config config/strategy.prod.conservative.json \

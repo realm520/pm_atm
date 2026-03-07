@@ -8,8 +8,12 @@ from typing import Any, TypeVar
 
 from weather_arb.engine import EngineConfig, PaperArbEngine
 from weather_arb.execution import ExecutionConfig
+from weather_arb.execution_service import ExecutionService
+from weather_arb.exchange_sim import SimExchangeExecutor
 from weather_arb.live import LivePaperRunner, LiveRunnerConfig, StaticForecastProvider, run_async
+from weather_arb.order_store import SqliteOrderStore
 from weather_arb.polymarket import PolymarketClient
+from weather_arb.polymarket_executor import PolymarketExecutionConfig, PolymarketLiveExecutor
 from weather_arb.realtime import PollingMarketStreamer, PolymarketWSStreamer, RealtimeConfig, WebSocketMarketStreamer
 from weather_arb.risk import RiskConfig
 from weather_arb.strategy import StrategyConfig
@@ -136,6 +140,24 @@ def main() -> None:
     with open(args.run_meta, "w", encoding="utf-8") as f:
         json.dump(run_meta, f, ensure_ascii=False, indent=2)
 
+    execution_service = None
+    if args.execution_mode in {"live", "live-sim"}:
+        store = SqliteOrderStore(args.orders_db)
+        if args.execution_mode == "live-sim":
+            execution_service = ExecutionService(store=store, exchange=SimExchangeExecutor(fill_after_sec=0.2))
+        else:
+            if not args.poly_exec_base_url:
+                raise ValueError("--poly-exec-base-url is required in --execution-mode live")
+            execution_service = ExecutionService(
+                store=store,
+                exchange=PolymarketLiveExecutor(
+                    PolymarketExecutionConfig(
+                        base_url=args.poly_exec_base_url,
+                        api_key=args.poly_exec_api_key,
+                    )
+                ),
+            )
+
     runner = LivePaperRunner(
         engine=engine,
         forecast_provider=forecast_provider,
@@ -154,6 +176,7 @@ def main() -> None:
             telegram_chat_id=args.telegram_chat_id,
             telegram_thread_id=args.telegram_thread_id,
         ),
+        execution_service=execution_service,
     )
 
     if args.mode == "poll":
