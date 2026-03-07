@@ -80,10 +80,22 @@ class PolymarketAccountManager:
     ) -> PolymarketAccount:
         c = client or self._build_client(host=host, chain_id=chain_id, private_key=private_key)
         raw = c.create_or_derive_api_creds(nonce=nonce)
+        if isinstance(raw, dict):
+            api_key = raw.get("apiKey")
+            secret = raw.get("secret")
+            passphrase = raw.get("passphrase")
+        else:
+            api_key = getattr(raw, "api_key", None) or getattr(raw, "apiKey", None)
+            secret = getattr(raw, "api_secret", None) or getattr(raw, "secret", None)
+            passphrase = getattr(raw, "api_passphrase", None) or getattr(raw, "passphrase", None)
+
+        if not api_key or not secret or not passphrase:
+            raise RuntimeError("create_or_derive_api_creds returned incomplete credentials")
+
         creds = PolymarketApiCreds(
-            apiKey=str(raw["apiKey"]),
-            secret=str(raw["secret"]),
-            passphrase=str(raw["passphrase"]),
+            apiKey=str(api_key),
+            secret=str(secret),
+            passphrase=str(passphrase),
         )
         account = PolymarketAccount(
             name=name,

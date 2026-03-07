@@ -24,15 +24,17 @@ class PolymarketDirectTrader:
         except Exception as exc:  # pragma: no cover
             raise RuntimeError("py_clob_client is required. Install dependency: py-clob-client") from exc
 
+        from py_clob_client.clob_types import ApiCreds
+
         return ClobClient(
             host=account.host,
             chain_id=account.chain_id,
             key=private_key,
-            creds={
-                "apiKey": account.creds.apiKey,
-                "secret": account.creds.secret,
-                "passphrase": account.creds.passphrase,
-            },
+            creds=ApiCreds(
+                api_key=account.creds.apiKey,
+                api_secret=account.creds.secret,
+                api_passphrase=account.creds.passphrase,
+            ),
             signature_type=account.signature_type,
             funder=account.funder,
         )
@@ -51,15 +53,16 @@ class PolymarketDirectTrader:
             raise ValueError("side must be BUY or SELL")
 
         # py_clob_client uses create_order + post_order flow.
-        order_args = {
-            "token_id": str(req.token_id),
-            "price": float(req.price),
-            "size": float(req.size),
-            "side": side,
-        }
+        from py_clob_client.clob_types import OrderArgs
+
+        order_args = OrderArgs(
+            token_id=str(req.token_id),
+            price=float(req.price),
+            size=float(req.size),
+            side=side,
+        )
         signed_order = client.create_order(order_args)
         return client.post_order(signed_order, order_type)
-
     def cancel_order(self, *, account: PolymarketAccount, private_key: str, order_id: str) -> Any:
         client = self._build_client(account, private_key)
         return client.cancel(order_id)
