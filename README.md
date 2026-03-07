@@ -35,6 +35,7 @@ scripts/
   generate_weather_config.py
   scan_all_weather_markets.py
   install_weather_scan_cron.sh
+  enrich_market_report.py
 tests/unit/
   test_strategy_smoke.py
   test_execution_risk.py
@@ -81,7 +82,7 @@ uv run python scripts/run_live_paper.py --mode poll --market-id <MARKET_ID> --we
 # Polymarket 专用（推荐，默认 provider=polymarket）
 uv run python scripts/run_live_paper.py --mode ws --market-ids 1427437,1498390 --max-seconds 1800
 
-# 直接从 weather 配置读取全部市场ID
+# 直接从 weather 配置读取全部市场ID（内部自动转换为 CLOB asset_ids 订阅）
 uv run python scripts/run_live_paper.py --mode ws --weather-config config/weather_events.generated.json --all-from-weather-config --max-seconds 1800
 
 # 通用 WS provider（自定义）
@@ -127,9 +128,22 @@ Live paper 会输出：
 - `logs/live_events.jsonl`（结构化事件日志：run_start/summary/trade/error/run_stop）
 - `logs/live_errors.log`（异常堆栈）
 - `logs/live_run_meta.json`（本次运行参数快照）
+- `logs/live_ws_raw.jsonl`（原始WS消息，订阅问题排查用）
 
 可选参数：
 - `--weather-cache-ttl`：天气数据缓存秒数（默认300），降低 Open-Meteo 请求频率
+
+## 市场标题增强报告
+
+```bash
+uv run python scripts/enrich_market_report.py \
+  --ranking outputs/market_pnl_ranking_ws_all_30m.csv \
+  --trades outputs/live_trades_ws_all_30m.csv
+```
+
+输出：
+- `outputs/market_pnl_ranking_ws_all_30m_enriched.csv`
+- `outputs/live_review_ws_all_30m_enriched.md`
 
 ## 安装定时任务（cron）
 
