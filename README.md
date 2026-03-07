@@ -210,7 +210,16 @@ uv run python scripts/manage_polymarket_account.py init \
 # 2) 查看已管理账号
 uv run python scripts/manage_polymarket_account.py list
 
-# 3) 程序化下单
+# 3) 切换为 Polymarket proxy wallet（免 gas 模式）
+uv run python scripts/manage_polymarket_account.py set-funder \
+  --name main \
+  --funder 0xYourProxyWallet \
+  --signature-type 2
+
+# 4) 获取 bridge 充值地址（evm/svm/btc/tvm）
+uv run python scripts/manage_polymarket_account.py show-deposit-addresses --name main
+
+# 5) 程序化下单
 uv run python scripts/manage_polymarket_account.py place-order \
   --name main \
   --token-id <TOKEN_ID> \

@@ -33,3 +33,22 @@ def test_account_manager_create_and_list(tmp_path) -> None:
     assert len(all_acc) == 1
     assert all_acc[0].name == "main"
     assert all_acc[0].creds.secret == "s-1"
+
+
+def test_account_manager_update_funder(tmp_path) -> None:
+    vault = tmp_path / "accounts.json"
+    m = PolymarketAccountManager(str(vault))
+    m.create_or_derive_account(
+        name="main",
+        private_key="0xabc",
+        wallet_address="0xw",
+        funder="0xf",
+        signature_type=2,
+        nonce=7,
+        chain_id=137,
+        host="https://clob.polymarket.com",
+        client=FakeClient(),
+    )
+    updated = m.update_funder(name="main", funder="0xproxy", signature_type=1)
+    assert updated.funder == "0xproxy"
+    assert updated.signature_type == 1

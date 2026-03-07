@@ -40,6 +40,16 @@ def main() -> None:
     p_cancel.add_argument("--order-id", required=True)
     p_cancel.add_argument("--vault", default="state/polymarket_accounts.json")
 
+    p_set_funder = sub.add_parser("set-funder", help="Update account funder/signature type")
+    p_set_funder.add_argument("--name", required=True)
+    p_set_funder.add_argument("--funder", required=True)
+    p_set_funder.add_argument("--signature-type", type=int, default=None)
+    p_set_funder.add_argument("--vault", default="state/polymarket_accounts.json")
+
+    p_deposit = sub.add_parser("show-deposit-addresses", help="Fetch bridge deposit addresses for account funder")
+    p_deposit.add_argument("--name", required=True)
+    p_deposit.add_argument("--vault", default="state/polymarket_accounts.json")
+
     args = parser.parse_args()
 
     manager = PolymarketAccountManager(vault_path=args.vault)
@@ -87,6 +97,28 @@ def main() -> None:
                 }
             )
         print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+
+    if args.cmd == "set-funder":
+        acct = manager.update_funder(name=args.name, funder=args.funder, signature_type=args.signature_type)
+        print(
+            json.dumps(
+                {
+                    "name": acct.name,
+                    "wallet_address": acct.wallet_address,
+                    "funder": acct.funder,
+                    "signature_type": acct.signature_type,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+
+    if args.cmd == "show-deposit-addresses":
+        acct = manager.get_account(args.name)
+        res = manager.get_bridge_deposit_addresses(acct.funder)
+        print(json.dumps({"name": acct.name, "funder": acct.funder, "deposit": res}, ensure_ascii=False, indent=2))
         return
 
     private_key = os.getenv("POLY_PRIVATE_KEY", "")

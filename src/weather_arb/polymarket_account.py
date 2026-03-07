@@ -6,6 +6,8 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Protocol
 
+import requests
+
 
 @dataclass(frozen=True)
 class PolymarketApiCreds:
@@ -148,3 +150,33 @@ class PolymarketAccountManager:
             if a.name == name:
                 return a
         raise KeyError(f"account not found: {name}")
+
+    def update_funder(self, *, name: str, funder: str, signature_type: int | None = None) -> PolymarketAccount:
+        data = self._load()
+        updated = None
+        for a in data.get("accounts", []):
+            if str(a.get("name")) != name:
+                continue
+            a["funder"] = funder
+            if signature_type is not None:
+                a["signature_type"] = int(signature_type)
+            updated = a
+            break
+
+        if updated is None:
+            raise KeyError(f"account not found: {name}")
+
+        self._save(data)
+        return self.get_account(name)
+
+    def get_bridge_deposit_addresses(self, funder_address: str, timeout_sec: float = 10.0) -> dict[str, Any]:
+        resp = requests.post(
+            "https://bridge.polymarket.com/deposit",
+            json={"address": funder_address},
+            timeout=timeout_sec,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError("unexpected bridge response")
+        return data
