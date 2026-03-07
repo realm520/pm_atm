@@ -67,6 +67,10 @@ def main() -> None:
     parser.add_argument("--risk-config", default="", help="JSON file for RiskConfig overrides")
     parser.add_argument("--execution-config", default="", help="JSON file for ExecutionConfig overrides")
     parser.add_argument("--engine-config", default="", help="JSON file for EngineConfig overrides")
+    parser.add_argument("--execution-mode", choices=["paper", "live-sim", "live"], default="paper")
+    parser.add_argument("--orders-db", default="state/orders.db", help="Order state sqlite path")
+    parser.add_argument("--poly-exec-base-url", default="", help="Live execution gateway base URL")
+    parser.add_argument("--poly-exec-api-key", default="", help="Live execution API key")
     args = parser.parse_args()
 
     strategy_cfg = _load_dataclass_config(args.strategy_config or None, StrategyConfig)
@@ -125,6 +129,9 @@ def main() -> None:
         "risk_config": args.risk_config,
         "execution_config": args.execution_config,
         "engine_config": args.engine_config,
+        "execution_mode": args.execution_mode,
+        "orders_db": args.orders_db,
+        "poly_exec_base_url": bool(args.poly_exec_base_url),
     }
     with open(args.run_meta, "w", encoding="utf-8") as f:
         json.dump(run_meta, f, ensure_ascii=False, indent=2)

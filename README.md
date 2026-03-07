@@ -142,6 +142,8 @@ Live paper 会输出：
 - `--alerts-jsonl`：告警事件落盘路径
 - `--telegram-bot-token` + `--telegram-chat-id`：可选 Telegram 运行告警
 - `--telegram-thread-id`：告警发送到指定 topic/thread（Telegram forum）
+- `--execution-mode`：执行模式（`paper`/`live-sim`/`live`，当前默认 `paper`）
+- `--orders-db`：订单状态数据库路径（为 live 执行预留）
 
 生产配置示例（保守档）：
 
