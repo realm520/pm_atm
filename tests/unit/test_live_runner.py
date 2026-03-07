@@ -12,6 +12,11 @@ from weather_arb.live import CircuitBreakerTriggered, LivePaperRunner, LiveRunne
 class DummyExecutionService:
     def __init__(self, hard_stop: bool = False) -> None:
         self.hard_stop = hard_stop
+        self.submitted: list[dict] = []
+
+    def submit(self, intent):
+        self.submitted.append({"event_id": intent.event_id, "asset_id": intent.asset_id, "side": intent.side.value})
+        return intent
 
     def refresh_recent(self, limit: int = 200):
         return []
@@ -117,3 +122,38 @@ def test_live_runner_circuit_breaker_by_execution_hard_stop(tmp_path: Path) -> N
 
     with pytest.raises(CircuitBreakerTriggered):
         asyncio.run(runner.on_tick({"id": "m1", "price": 0.52, "timestamp": "2026-01-01T00:00:00Z"}))
+
+
+def test_live_runner_submit_execution_from_new_trades(tmp_path: Path) -> None:
+    exec_svc = DummyExecutionService(hard_stop=False)
+    runner = LivePaperRunner(
+        engine=PaperArbEngine(),
+        forecast_provider=StaticForecastProvider(0.99),
+        config=LiveRunnerConfig(
+            eval_every_ticks=1,
+            out_csv=str(tmp_path / "live_trades.csv"),
+            summary_csv=str(tmp_path / "live_summary.csv"),
+            events_jsonl=str(tmp_path / "events.jsonl"),
+            error_log=str(tmp_path / "errors.log"),
+            alerts_jsonl=str(tmp_path / "alerts.jsonl"),
+            hard_daily_loss_limit=-999,
+        ),
+        execution_service=exec_svc,
+    )
+
+    runner.event_latest_asset_id["m1"] = "a1"
+    runner.last_new_trade_rows = [
+        {
+            "event_id": "m1",
+            "entry_ts": "t1",
+            "exit_ts": "t2",
+            "side": "LONG_YES",
+            "entry_price": 0.45,
+            "exit_price": 0.47,
+        }
+    ]
+    runner._submit_execution_from_new_trades()
+
+    assert len(exec_svc.submitted) == 1
+    assert exec_svc.submitted[0]["event_id"] == "m1"
+    assert exec_svc.submitted[0]["asset_id"] == "a1"

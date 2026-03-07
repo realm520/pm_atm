@@ -10,6 +10,7 @@ import pandas as pd
 import requests
 
 from .engine import PaperArbEngine
+from .orders import ExecutionIntent, OrderSide
 
 
 class ForecastProvider(Protocol):
@@ -17,6 +18,7 @@ class ForecastProvider(Protocol):
 
 
 class ExecutionHealthProvider(Protocol):
+    def submit(self, intent: ExecutionIntent) -> Any: ...
     def refresh_recent(self, limit: int = 200) -> list[Any]: ...
     def risk_flags(self, minutes: int = 5) -> dict[str, bool | float | int]: ...
 
@@ -85,6 +87,9 @@ class LivePaperRunner:
         self.cfg = config or LiveRunnerConfig()
         self.rows: list[dict[str, Any]] = []
         self.seen_trade_keys: set[str] = set()
+        self.event_latest_asset_id: dict[str, str] = {}
+        self.execution_submitted_keys: set[str] = set()
+        self.last_new_trade_rows: list[dict[str, Any]] = []
         self.tick_count = 0
         self.runtime_error_count = 0
         self._halted = False
@@ -107,9 +112,14 @@ class LivePaperRunner:
         ts = tick.get("timestamp") or tick.get("updatedAt") or tick.get("ts") or pd.Timestamp.now("UTC").isoformat()
         model_probs = self.forecast_provider.get_probabilities(str(event_id), tick)
 
+        asset_id = tick.get("asset_id") or tick.get("assetId")
+        event_id_str = str(event_id)
+        if asset_id:
+            self.event_latest_asset_id[event_id_str] = str(asset_id)
+
         return {
             "ts": ts,
-            "event_id": str(event_id),
+            "event_id": event_id_str,
             "market_prob": float(market_prob),
             **model_probs,
         }
@@ -210,6 +220,7 @@ class LivePaperRunner:
         self._append_event("summary", row)
 
     def _dump_new_trades(self, trades: pd.DataFrame) -> int:
+        self.last_new_trade_rows = []
         if trades.empty:
             return 0
 
@@ -232,7 +243,61 @@ class LivePaperRunner:
         new_df.to_csv(out_path, mode="a", header=write_header, index=False)
         for r in new_rows:
             self._append_event("trade", r)
+        self.last_new_trade_rows = new_rows
         return len(new_df)
+
+    def _submit_execution_from_new_trades(self) -> None:
+        if self.execution_service is None:
+            return
+        if not self.last_new_trade_rows:
+            return
+
+        for r in self.last_new_trade_rows:
+            event_id = str(r.get("event_id") or "")
+            if not event_id:
+                continue
+            key = f"{event_id}|{r.get('entry_ts')}|{r.get('exit_ts')}|{r.get('side')}"
+            if key in self.execution_submitted_keys:
+                continue
+
+            asset_id = self.event_latest_asset_id.get(event_id)
+            if not asset_id:
+                self._append_alert("warning", "execution_skip_no_asset", f"skip trade {key}: missing asset_id mapping")
+                continue
+
+            side_raw = str(r.get("side") or "")
+            if side_raw == "LONG_YES":
+                side = OrderSide.BUY
+            elif side_raw == "SHORT_YES":
+                side = OrderSide.SELL
+            else:
+                self._append_alert("warning", "execution_skip_bad_side", f"skip trade {key}: unknown side={side_raw}")
+                continue
+
+            qty = float(self.engine.cfg.base_trade_qty)
+            limit_price = float(r.get("exit_price") or r.get("entry_price") or 0.5)
+            intent = ExecutionIntent(
+                event_id=event_id,
+                asset_id=asset_id,
+                side=side,
+                qty=qty,
+                limit_price=min(0.999, max(0.001, limit_price)),
+                timeout_sec=15.0,
+                client_order_id=f"live-{key}",
+            )
+            self.execution_service.submit(intent)
+            self.execution_submitted_keys.add(key)
+            self._append_event(
+                "execution_submit",
+                {
+                    "event_id": event_id,
+                    "asset_id": asset_id,
+                    "side": side.value,
+                    "qty": qty,
+                    "limit_price": limit_price,
+                    "client_order_id": intent.client_order_id,
+                },
+            )
 
     async def on_tick(self, tick: dict[str, Any]) -> None:
         if self._halted:
@@ -257,6 +322,7 @@ class LivePaperRunner:
             result = self.engine.run(df)
             summary = result["summary"]
             n_new = self._dump_new_trades(result["trades"])
+            self._submit_execution_from_new_trades()
             self._append_summary_row(row["event_id"], summary, n_new)
 
             total_pnl = float(summary.get("total_pnl", 0.0) or 0.0)
