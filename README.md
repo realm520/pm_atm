@@ -132,6 +132,22 @@ Live paper 会输出：
 
 可选参数：
 - `--weather-cache-ttl`：天气数据缓存秒数（默认300），降低 Open-Meteo 请求频率
+- `--strategy-config`：策略参数 JSON（映射 `StrategyConfig`）
+- `--risk-config`：风控参数 JSON（映射 `RiskConfig`）
+- `--execution-config`：执行参数 JSON（映射 `ExecutionConfig`）
+- `--engine-config`：引擎参数 JSON（映射 `EngineConfig`）
+
+生产配置示例（保守档）：
+
+```bash
+uv run python scripts/run_live_paper.py --mode ws \
+  --weather-config config/weather_events.generated.json \
+  --all-from-weather-config \
+  --strategy-config config/strategy.prod.conservative.json \
+  --risk-config config/risk.prod.conservative.json \
+  --engine-config config/engine.prod.conservative.json \
+  --max-seconds 21600
+```
 
 ## 市场标题增强报告
 

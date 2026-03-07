@@ -1,0 +1,22 @@
+{
+  "pnl": {
+    "daily_loss_alert": -8.0,
+    "daily_loss_hard_stop": -12.0
+  },
+  "stability": {
+    "ws_reconnects_5m_warn": 5,
+    "ws_reconnects_5m_crit": 10,
+    "error_events_5m_warn": 10,
+    "error_events_5m_crit": 20
+  },
+  "execution": {
+    "order_reject_rate_warn": 0.05,
+    "order_reject_rate_crit": 0.1,
+    "slippage_bps_warn": 20,
+    "slippage_bps_crit": 35
+  },
+  "position": {
+    "open_positions_warn_ratio": 0.8,
+    "open_positions_crit_ratio": 1.0
+  }
+}

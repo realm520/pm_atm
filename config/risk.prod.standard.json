@@ -1,0 +1,9 @@
+{
+  "max_positions": 6,
+  "max_event_notional": 20.0,
+  "max_total_notional": 120.0,
+  "daily_loss_limit": -24.0,
+  "per_event_daily_loss_limit": -6.0,
+  "max_consecutive_losses": 3,
+  "cooldown_steps": 100
+}
