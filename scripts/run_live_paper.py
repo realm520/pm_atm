@@ -16,6 +16,7 @@ def main() -> None:
     parser.add_argument("--mode", choices=["poll", "ws"], default="poll")
     parser.add_argument("--market-id", help="Required for poll mode")
     parser.add_argument("--market-ids", default="", help="Comma-separated market ids for ws mode")
+    parser.add_argument("--all-from-weather-config", action="store_true", help="Use all market ids from --weather-config (ws mode)")
     parser.add_argument("--ws-url", help="Required for ws mode")
     parser.add_argument("--subscribe-json", help='Optional WS subscribe payload JSON string, e.g. {"type":"sub"}')
     parser.add_argument("--eval-every", type=int, default=10)
@@ -54,6 +55,7 @@ def main() -> None:
         "mode": args.mode,
         "market_id": args.market_id,
         "market_ids": args.market_ids,
+        "all_from_weather_config": args.all_from_weather_config,
         "ws_url": args.ws_url,
         "eval_every": args.eval_every,
         "poll_interval": args.poll_interval,
@@ -92,6 +94,13 @@ def main() -> None:
     max_seconds = args.max_seconds if args.max_seconds and args.max_seconds > 0 else None
 
     market_ids = [m.strip() for m in args.market_ids.split(",") if m.strip()]
+    if args.all_from_weather_config:
+        if not args.weather_config:
+            raise ValueError("--all-from-weather-config requires --weather-config")
+        with open(args.weather_config, "r", encoding="utf-8") as f:
+            _raw_cfg = json.load(f)
+        market_ids = sorted(str(k) for k in _raw_cfg.keys())
+
     if args.ws_provider == "polymarket":
         if not market_ids:
             if args.market_id:

@@ -81,6 +81,9 @@ uv run python scripts/run_live_paper.py --mode poll --market-id <MARKET_ID> --we
 # Polymarket 专用（推荐，默认 provider=polymarket）
 uv run python scripts/run_live_paper.py --mode ws --market-ids 1427437,1498390 --max-seconds 1800
 
+# 直接从 weather 配置读取全部市场ID
+uv run python scripts/run_live_paper.py --mode ws --weather-config config/weather_events.generated.json --all-from-weather-config --max-seconds 1800
+
 # 通用 WS provider（自定义）
 uv run python scripts/run_live_paper.py --mode ws --ws-provider generic --ws-url <WS_URL> --subscribe-json '{"type":"subscribe"}'
 ```
