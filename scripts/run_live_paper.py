@@ -49,6 +49,13 @@ def main() -> None:
     parser.add_argument("--events-jsonl", default="logs/live_events.jsonl")
     parser.add_argument("--error-log", default="logs/live_errors.log")
     parser.add_argument("--run-meta", default="logs/live_run_meta.json")
+    parser.add_argument("--alerts-jsonl", default="logs/live_alerts.jsonl")
+    parser.add_argument("--kill-switch-path", default="", help="If file exists, runner halts gracefully")
+    parser.add_argument("--hard-daily-loss-limit", type=float, default=-12.0, help="Circuit breaker when total_pnl <= this value")
+    parser.add_argument("--max-runtime-errors", type=int, default=50, help="Circuit breaker after N on_tick runtime errors")
+    parser.add_argument("--alert-cooldown-sec", type=float, default=120.0, help="Min seconds between identical alert codes")
+    parser.add_argument("--telegram-bot-token", default="", help="Optional Telegram bot token for runtime alerts")
+    parser.add_argument("--telegram-chat-id", default="", help="Optional Telegram chat id for runtime alerts")
     parser.add_argument("--ws-raw-log", default="logs/live_ws_raw.jsonl", help="Raw WS messages for diagnostics")
     parser.add_argument("--max-seconds", type=float, default=0, help="Auto-stop after N seconds (0 = run forever)")
     parser.add_argument("--static-prob", type=float, default=0.55, help="Fallback model probability")
@@ -86,7 +93,7 @@ def main() -> None:
             config=OpenMeteoConfig(cache_ttl_sec=args.weather_cache_ttl),
         )
 
-    for p in [args.out_csv, args.summary_csv, args.events_jsonl, args.error_log, args.run_meta, args.ws_raw_log]:
+    for p in [args.out_csv, args.summary_csv, args.events_jsonl, args.error_log, args.run_meta, args.alerts_jsonl, args.ws_raw_log]:
         Path(p).parent.mkdir(parents=True, exist_ok=True)
 
     run_meta = {
@@ -101,6 +108,12 @@ def main() -> None:
         "summary_csv": args.summary_csv,
         "events_jsonl": args.events_jsonl,
         "error_log": args.error_log,
+        "alerts_jsonl": args.alerts_jsonl,
+        "kill_switch_path": args.kill_switch_path,
+        "hard_daily_loss_limit": args.hard_daily_loss_limit,
+        "max_runtime_errors": args.max_runtime_errors,
+        "alert_cooldown_sec": args.alert_cooldown_sec,
+        "telegram_alert_enabled": bool(args.telegram_bot_token and args.telegram_chat_id),
         "max_seconds": args.max_seconds,
         "weather_config": args.weather_config,
         "weather_cache_ttl": args.weather_cache_ttl,
@@ -123,6 +136,13 @@ def main() -> None:
             summary_csv=args.summary_csv,
             events_jsonl=args.events_jsonl,
             error_log=args.error_log,
+            alerts_jsonl=args.alerts_jsonl,
+            kill_switch_path=args.kill_switch_path,
+            hard_daily_loss_limit=args.hard_daily_loss_limit,
+            max_runtime_errors=args.max_runtime_errors,
+            alert_cooldown_sec=args.alert_cooldown_sec,
+            telegram_bot_token=args.telegram_bot_token,
+            telegram_chat_id=args.telegram_chat_id,
         ),
     )
 

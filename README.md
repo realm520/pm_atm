@@ -136,6 +136,11 @@ Live paper 会输出：
 - `--risk-config`：风控参数 JSON（映射 `RiskConfig`）
 - `--execution-config`：执行参数 JSON（映射 `ExecutionConfig`）
 - `--engine-config`：引擎参数 JSON（映射 `EngineConfig`）
+- `--hard-daily-loss-limit`：硬熔断（`total_pnl` 低于阈值即停）
+- `--max-runtime-errors`：运行期错误次数熔断
+- `--kill-switch-path`：存在该文件时立即停机（人工 kill switch）
+- `--alerts-jsonl`：告警事件落盘路径
+- `--telegram-bot-token` + `--telegram-chat-id`：可选 Telegram 运行告警
 
 生产配置示例（保守档）：
 
