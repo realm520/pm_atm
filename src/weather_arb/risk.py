@@ -10,6 +10,9 @@ class RiskConfig:
     max_event_notional: float = 2.0
     max_total_notional: float = 8.0
     daily_loss_limit: float = -2.5
+    per_event_daily_loss_limit: float = -1.0
+    max_consecutive_losses: int = 3
+    cooldown_steps: int = 50
 
 
 class RiskManager:
@@ -25,9 +28,19 @@ class RiskManager:
         price: float,
         open_positions: list[dict[str, Any]],
         day_realized_pnl: float,
+        market_realized_pnl: dict[str, float] | None = None,
+        in_cooldown: bool = False,
     ) -> tuple[bool, str]:
+        if in_cooldown:
+            return False, "cooldown"
+
         if day_realized_pnl <= self.cfg.daily_loss_limit:
             return False, "daily_loss_limit"
+
+        if market_realized_pnl is not None:
+            event_pnl = float(market_realized_pnl.get(event_id, 0.0))
+            if event_pnl <= self.cfg.per_event_daily_loss_limit:
+                return False, "per_event_daily_loss_limit"
 
         if len(open_positions) >= self.cfg.max_positions:
             return False, "max_positions"
