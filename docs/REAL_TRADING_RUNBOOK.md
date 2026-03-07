@@ -8,7 +8,23 @@ export POLY_EXEC_API_KEY='<your-api-key>'
 export TG_BOT_TOKEN='<telegram-bot-token>'
 ```
 
-## 2) 启动（保守参数 + 监控 topic=52）
+## 2) 一键自检/启动/停止（推荐）
+
+```bash
+# 自检
+scripts/run_live_prod.sh check
+
+# 启动
+scripts/run_live_prod.sh start
+
+# 状态
+scripts/run_live_prod.sh status
+
+# 停机（会触发 kill switch）
+scripts/run_live_prod.sh stop
+```
+
+## 3) 手动启动（保守参数 + 监控 topic=52）
 
 ```bash
 uv run python scripts/run_live_paper.py --mode ws \
@@ -31,13 +47,13 @@ uv run python scripts/run_live_paper.py --mode ws \
   --max-seconds 21600
 ```
 
-## 3) 紧急停机
+## 4) 紧急停机
 
 ```bash
 touch /tmp/weather_arb.stop
 ```
 
-## 4) 核对
+## 5) 核对
 
 - `logs/live_alerts_ws_all_6h.jsonl`
 - `logs/live_errors_ws_all_6h.log`

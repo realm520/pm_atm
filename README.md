@@ -159,6 +159,15 @@ uv run python scripts/run_live_paper.py --mode ws \
   --max-seconds 21600
 ```
 
+一键实盘启动脚本（含自检/启动/停止）：
+
+```bash
+scripts/run_live_prod.sh check
+scripts/run_live_prod.sh start
+scripts/run_live_prod.sh status
+scripts/run_live_prod.sh stop
+```
+
 ## 市场标题增强报告
 
 ```bash
