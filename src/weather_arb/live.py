@@ -46,6 +46,14 @@ class LiveRunnerConfig:
 class LivePaperRunner:
     """Consumes realtime ticks and repeatedly evaluates paper engine."""
 
+    @staticmethod
+    def _safe_print(message: str) -> None:
+        try:
+            print(message)
+        except BrokenPipeError:
+            # Stdout pipe can disappear when running detached/piped; ignore logging failure.
+            return
+
     def __init__(
         self,
         engine: PaperArbEngine,
@@ -168,7 +176,7 @@ class LivePaperRunner:
             n_new = self._dump_new_trades(result["trades"])
             self._append_summary_row(row["event_id"], summary, n_new)
 
-            print(
+            self._safe_print(
                 f"[live] ticks={self.tick_count} trades={summary.get('n_trades', 0)} "
                 f"new_trades={n_new} total_pnl={summary.get('total_pnl', 0.0):.4f} "
                 f"open_positions={summary.get('open_positions', 0)}"
@@ -176,7 +184,7 @@ class LivePaperRunner:
         except Exception as exc:
             self._append_error("on_tick", exc)
             self._append_event("error", {"context": "on_tick", "message": str(exc)})
-            print(f"[live][error] on_tick failed: {type(exc).__name__}: {exc}")
+            self._safe_print(f"[live][error] on_tick failed: {type(exc).__name__}: {exc}")
 
     async def run_polling(self, streamer, market_id: str, max_seconds: float | None = None) -> None:
         self._append_event("run_start", {"mode": "poll", "market_id": market_id, "max_seconds": max_seconds})
@@ -188,11 +196,11 @@ class LivePaperRunner:
         except asyncio.TimeoutError:
             streamer.stop()
             self._append_event("run_stop", {"reason": "timeout", "max_seconds": max_seconds})
-            print(f"[live] reached max_seconds={max_seconds}, graceful stop")
+            self._safe_print(f"[live] reached max_seconds={max_seconds}, graceful stop")
         except Exception as exc:
             self._append_error("run_polling", exc)
             self._append_event("error", {"context": "run_polling", "message": str(exc)})
-            print(f"[live][error] polling loop failed: {type(exc).__name__}: {exc}")
+            self._safe_print(f"[live][error] polling loop failed: {type(exc).__name__}: {exc}")
             raise
 
     async def run_ws(self, ws_streamer, max_seconds: float | None = None) -> None:
@@ -205,11 +213,11 @@ class LivePaperRunner:
         except asyncio.TimeoutError:
             ws_streamer.stop()
             self._append_event("run_stop", {"reason": "timeout", "max_seconds": max_seconds})
-            print(f"[live] reached max_seconds={max_seconds}, graceful stop")
+            self._safe_print(f"[live] reached max_seconds={max_seconds}, graceful stop")
         except Exception as exc:
             self._append_error("run_ws", exc)
             self._append_event("error", {"context": "run_ws", "message": str(exc)})
-            print(f"[live][error] ws loop failed: {type(exc).__name__}: {exc}")
+            self._safe_print(f"[live][error] ws loop failed: {type(exc).__name__}: {exc}")
             raise
 
 
