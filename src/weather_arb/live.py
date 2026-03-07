@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+import traceback
 
 import pandas as pd
 
@@ -38,6 +39,8 @@ class LiveRunnerConfig:
     history_limit: int = 5000
     out_csv: str = "outputs/live_trades.csv"
     summary_csv: str = "outputs/live_summary.csv"
+    events_jsonl: str = "logs/live_events.jsonl"
+    error_log: str = "logs/live_errors.log"
 
 
 class LivePaperRunner:
@@ -80,6 +83,25 @@ class LivePaperRunner:
             **model_probs,
         }
 
+    def _append_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        out_path = Path(self.cfg.events_jsonl)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "logged_at": pd.Timestamp.now("UTC").isoformat(),
+            "event_type": event_type,
+            **payload,
+        }
+        with open(out_path, "a", encoding="utf-8") as f:
+            f.write(pd.Series(record).to_json(force_ascii=False) + "\n")
+
+    def _append_error(self, context: str, exc: Exception) -> None:
+        out_path = Path(self.cfg.error_log)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "a", encoding="utf-8") as f:
+            f.write(f"[{pd.Timestamp.now('UTC').isoformat()}] {context}: {type(exc).__name__}: {exc}\n")
+            f.write(traceback.format_exc())
+            f.write("\n")
+
     def _append_summary_row(self, market_id: str, summary: dict[str, Any], n_new: int) -> None:
         out_path = Path(self.cfg.summary_csv)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -99,6 +121,7 @@ class LivePaperRunner:
         df = pd.DataFrame([row])
         write_header = not out_path.exists()
         df.to_csv(out_path, mode="a", header=write_header, index=False)
+        self._append_event("summary", row)
 
     def _dump_new_trades(self, trades: pd.DataFrame) -> int:
         if trades.empty:
@@ -121,34 +144,42 @@ class LivePaperRunner:
         new_df = pd.DataFrame(new_rows)
         write_header = not out_path.exists()
         new_df.to_csv(out_path, mode="a", header=write_header, index=False)
+        for r in new_rows:
+            self._append_event("trade", r)
         return len(new_df)
 
     async def on_tick(self, tick: dict[str, Any]) -> None:
-        row = self._normalize_tick(tick)
-        if row is None:
-            return
+        try:
+            row = self._normalize_tick(tick)
+            if row is None:
+                return
 
-        self.rows.append(row)
-        if len(self.rows) > self.cfg.history_limit:
-            self.rows = self.rows[-self.cfg.history_limit :]
+            self.rows.append(row)
+            if len(self.rows) > self.cfg.history_limit:
+                self.rows = self.rows[-self.cfg.history_limit :]
 
-        self.tick_count += 1
-        if self.tick_count % self.cfg.eval_every_ticks != 0:
-            return
+            self.tick_count += 1
+            if self.tick_count % self.cfg.eval_every_ticks != 0:
+                return
 
-        df = pd.DataFrame(self.rows)
-        result = self.engine.run(df)
-        summary = result["summary"]
-        n_new = self._dump_new_trades(result["trades"])
-        self._append_summary_row(row["event_id"], summary, n_new)
+            df = pd.DataFrame(self.rows)
+            result = self.engine.run(df)
+            summary = result["summary"]
+            n_new = self._dump_new_trades(result["trades"])
+            self._append_summary_row(row["event_id"], summary, n_new)
 
-        print(
-            f"[live] ticks={self.tick_count} trades={summary.get('n_trades', 0)} "
-            f"new_trades={n_new} total_pnl={summary.get('total_pnl', 0.0):.4f} "
-            f"open_positions={summary.get('open_positions', 0)}"
-        )
+            print(
+                f"[live] ticks={self.tick_count} trades={summary.get('n_trades', 0)} "
+                f"new_trades={n_new} total_pnl={summary.get('total_pnl', 0.0):.4f} "
+                f"open_positions={summary.get('open_positions', 0)}"
+            )
+        except Exception as exc:
+            self._append_error("on_tick", exc)
+            self._append_event("error", {"context": "on_tick", "message": str(exc)})
+            print(f"[live][error] on_tick failed: {type(exc).__name__}: {exc}")
 
     async def run_polling(self, streamer, market_id: str, max_seconds: float | None = None) -> None:
+        self._append_event("run_start", {"mode": "poll", "market_id": market_id, "max_seconds": max_seconds})
         try:
             if max_seconds and max_seconds > 0:
                 await asyncio.wait_for(streamer.stream_market(market_id, self.on_tick), timeout=max_seconds)
@@ -156,9 +187,16 @@ class LivePaperRunner:
                 await streamer.stream_market(market_id, self.on_tick)
         except asyncio.TimeoutError:
             streamer.stop()
+            self._append_event("run_stop", {"reason": "timeout", "max_seconds": max_seconds})
             print(f"[live] reached max_seconds={max_seconds}, graceful stop")
+        except Exception as exc:
+            self._append_error("run_polling", exc)
+            self._append_event("error", {"context": "run_polling", "message": str(exc)})
+            print(f"[live][error] polling loop failed: {type(exc).__name__}: {exc}")
+            raise
 
     async def run_ws(self, ws_streamer, max_seconds: float | None = None) -> None:
+        self._append_event("run_start", {"mode": "ws", "max_seconds": max_seconds})
         try:
             if max_seconds and max_seconds > 0:
                 await asyncio.wait_for(ws_streamer.stream(self.on_tick), timeout=max_seconds)
@@ -166,7 +204,13 @@ class LivePaperRunner:
                 await ws_streamer.stream(self.on_tick)
         except asyncio.TimeoutError:
             ws_streamer.stop()
+            self._append_event("run_stop", {"reason": "timeout", "max_seconds": max_seconds})
             print(f"[live] reached max_seconds={max_seconds}, graceful stop")
+        except Exception as exc:
+            self._append_error("run_ws", exc)
+            self._append_event("error", {"context": "run_ws", "message": str(exc)})
+            print(f"[live][error] ws loop failed: {type(exc).__name__}: {exc}")
+            raise
 
 
 def run_async(coro: asyncio.Future) -> None:

@@ -14,7 +14,13 @@ def test_live_runner_normalize_and_dump(tmp_path: Path) -> None:
     runner = LivePaperRunner(
         engine=PaperArbEngine(),
         forecast_provider=StaticForecastProvider(0.6),
-        config=LiveRunnerConfig(eval_every_ticks=1, out_csv=str(out_file), summary_csv=str(summary_file)),
+        config=LiveRunnerConfig(
+            eval_every_ticks=1,
+            out_csv=str(out_file),
+            summary_csv=str(summary_file),
+            events_jsonl=str(tmp_path / "events.jsonl"),
+            error_log=str(tmp_path / "errors.log"),
+        ),
     )
 
     row = runner._normalize_tick({"id": "m1", "price": 0.52, "timestamp": "2026-01-01T00:00:00Z"})

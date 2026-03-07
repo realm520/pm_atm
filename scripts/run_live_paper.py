@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import argparse
-
 import json
+from pathlib import Path
 
 from weather_arb.engine import PaperArbEngine
 from weather_arb.live import LivePaperRunner, LiveRunnerConfig, StaticForecastProvider, run_async
@@ -21,6 +21,9 @@ def main() -> None:
     parser.add_argument("--poll-interval", type=float, default=2.0)
     parser.add_argument("--out-csv", default="outputs/live_trades.csv")
     parser.add_argument("--summary-csv", default="outputs/live_summary.csv")
+    parser.add_argument("--events-jsonl", default="logs/live_events.jsonl")
+    parser.add_argument("--error-log", default="logs/live_errors.log")
+    parser.add_argument("--run-meta", default="logs/live_run_meta.json")
     parser.add_argument("--max-seconds", type=float, default=0, help="Auto-stop after N seconds (0 = run forever)")
     parser.add_argument("--static-prob", type=float, default=0.55, help="Fallback model probability")
     parser.add_argument("--weather-config", default="", help="JSON file: {market_id: {latitude, longitude, variable, threshold, direction, horizon_hours}}")
@@ -38,6 +41,25 @@ def main() -> None:
         }
         forecast_provider = OpenMeteoMultiModelProvider(event_map=event_map)
 
+    for p in [args.out_csv, args.summary_csv, args.events_jsonl, args.error_log, args.run_meta]:
+        Path(p).parent.mkdir(parents=True, exist_ok=True)
+
+    run_meta = {
+        "mode": args.mode,
+        "market_id": args.market_id,
+        "ws_url": args.ws_url,
+        "eval_every": args.eval_every,
+        "poll_interval": args.poll_interval,
+        "out_csv": args.out_csv,
+        "summary_csv": args.summary_csv,
+        "events_jsonl": args.events_jsonl,
+        "error_log": args.error_log,
+        "max_seconds": args.max_seconds,
+        "weather_config": args.weather_config,
+    }
+    with open(args.run_meta, "w", encoding="utf-8") as f:
+        json.dump(run_meta, f, ensure_ascii=False, indent=2)
+
     runner = LivePaperRunner(
         engine=engine,
         forecast_provider=forecast_provider,
@@ -45,6 +67,8 @@ def main() -> None:
             eval_every_ticks=args.eval_every,
             out_csv=args.out_csv,
             summary_csv=args.summary_csv,
+            events_jsonl=args.events_jsonl,
+            error_log=args.error_log,
         ),
     )
 

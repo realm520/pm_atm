@@ -117,6 +117,9 @@ uv run python scripts/scan_all_weather_markets.py --limit 1000
 Live paper 会输出：
 - `outputs/live_trades.csv`（交易明细）
 - `outputs/live_summary.csv`（每次评估快照：tick、PnL、持仓、胜率）
+- `logs/live_events.jsonl`（结构化事件日志：run_start/summary/trade/error/run_stop）
+- `logs/live_errors.log`（异常堆栈）
+- `logs/live_run_meta.json`（本次运行参数快照）
 
 ## 安装定时任务（cron）
 

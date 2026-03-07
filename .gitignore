@@ -4,3 +4,6 @@ config/snapshots/
 config/weather_events.generated.json
 config/weather_scan_state.json
 config/*.log
+logs/*.log
+logs/*.jsonl
+logs/live_run_meta.json
