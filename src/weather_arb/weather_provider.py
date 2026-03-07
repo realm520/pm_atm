@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+import time
 from typing import Any, Callable
 
 import numpy as np
@@ -23,6 +23,7 @@ class WeatherEventConfig:
 class OpenMeteoConfig:
     base_url: str = "https://api.open-meteo.com/v1/forecast"
     timeout_sec: int = 12
+    cache_ttl_sec: int = 300
 
 
 class OpenMeteoMultiModelProvider:
@@ -43,6 +44,7 @@ class OpenMeteoMultiModelProvider:
         self.event_map = event_map
         self.cfg = config or OpenMeteoConfig()
         self.http_get = http_get or requests.get
+        self._cache: dict[str, tuple[float, dict[str, float]]] = {}
 
     def _fetch_series(self, cfg: WeatherEventConfig) -> dict[str, np.ndarray]:
         params = {
@@ -121,32 +123,44 @@ class OpenMeteoMultiModelProvider:
                 "cmc_prob": 0.5,
             }
 
-        params = {
-            "latitude": cfg.latitude,
-            "longitude": cfg.longitude,
-            "hourly": cfg.variable,
-            "forecast_days": 3,
-        }
-        resp = self.http_get(self.cfg.base_url, params=params, timeout=self.cfg.timeout_sec)
-        resp.raise_for_status()
-        payload = resp.json()
-        hourly = payload.get("hourly", {})
-        times = hourly.get("time", [])
-        base = hourly.get(cfg.variable, [])
-        if not times or not base:
+        now = time.time()
+        cached = self._cache.get(event_id)
+        if cached and now - cached[0] <= self.cfg.cache_ttl_sec:
+            return cached[1]
+
+        try:
+            params = {
+                "latitude": cfg.latitude,
+                "longitude": cfg.longitude,
+                "hourly": cfg.variable,
+                "forecast_days": 3,
+            }
+            resp = self.http_get(self.cfg.base_url, params=params, timeout=self.cfg.timeout_sec)
+            resp.raise_for_status()
+            payload = resp.json()
+            hourly = payload.get("hourly", {})
+            times = hourly.get("time", [])
+            base = hourly.get(cfg.variable, [])
+            if not times or not base:
+                probs = {f"{k}_prob": 0.5 for k in self.MODEL_KEYS}
+            else:
+                idx = self._idx_for_horizon(times, cfg.horizon_hours)
+                # best-effort: one series cloned into six model channels
+                v = float(base[min(idx, len(base) - 1)])
+                p_arr = self._event_probability(np.array([v]), cfg.threshold, cfg.direction)
+                p = float(np.clip(p_arr[0], 0.001, 0.999))
+                probs = {
+                    "ecmwf_prob": p,
+                    "gfs_prob": p,
+                    "hrrr_prob": p,
+                    "nam_prob": p,
+                    "ukmo_prob": p,
+                    "cmc_prob": p,
+                }
+            self._cache[event_id] = (now, probs)
+            return probs
+        except requests.RequestException:
+            if cached:
+                # stale-while-error
+                return cached[1]
             return {f"{k}_prob": 0.5 for k in self.MODEL_KEYS}
-
-        idx = self._idx_for_horizon(times, cfg.horizon_hours)
-        # best-effort: one series cloned into six model channels
-        v = float(base[min(idx, len(base) - 1)])
-        probs = self._event_probability(np.array([v]), cfg.threshold, cfg.direction)
-        p = float(np.clip(probs[0], 0.001, 0.999))
-
-        return {
-            "ecmwf_prob": p,
-            "gfs_prob": p,
-            "hrrr_prob": p,
-            "nam_prob": p,
-            "ukmo_prob": p,
-            "cmc_prob": p,
-        }

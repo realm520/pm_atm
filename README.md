@@ -78,7 +78,11 @@ uv run python scripts/run_live_paper.py --mode poll --market-id <MARKET_ID> --we
 ## 实时纸交易（WebSocket）
 
 ```bash
-uv run python scripts/run_live_paper.py --mode ws --ws-url <WS_URL> --subscribe-json '{"type":"subscribe"}'
+# Polymarket 专用（推荐，默认 provider=polymarket）
+uv run python scripts/run_live_paper.py --mode ws --market-ids 1427437,1498390 --max-seconds 1800
+
+# 通用 WS provider（自定义）
+uv run python scripts/run_live_paper.py --mode ws --ws-provider generic --ws-url <WS_URL> --subscribe-json '{"type":"subscribe"}'
 ```
 
 ## 接口冒烟测试（推荐先跑）
@@ -120,6 +124,9 @@ Live paper 会输出：
 - `logs/live_events.jsonl`（结构化事件日志：run_start/summary/trade/error/run_stop）
 - `logs/live_errors.log`（异常堆栈）
 - `logs/live_run_meta.json`（本次运行参数快照）
+
+可选参数：
+- `--weather-cache-ttl`：天气数据缓存秒数（默认300），降低 Open-Meteo 请求频率
 
 ## 安装定时任务（cron）
 
