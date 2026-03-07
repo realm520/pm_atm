@@ -70,6 +70,9 @@ uv run python scripts/run_live_paper.py --mode poll --market-id <MARKET_ID> --po
 
 # 接入 Open-Meteo 天气事件配置
 uv run python scripts/run_live_paper.py --mode poll --market-id <MARKET_ID> --weather-config config/weather_events.generated.json
+
+# 指定运行时长（秒），到点自动退出
+uv run python scripts/run_live_paper.py --mode poll --market-id <MARKET_ID> --weather-config config/weather_events.generated.json --max-seconds 1800
 ```
 
 ## 实时纸交易（WebSocket）
@@ -110,6 +113,10 @@ uv run python scripts/scan_all_weather_markets.py --limit 1000
 - `config/weather_events.generated.json`（当前有效配置）
 - `config/weather_scan_state.json`（扫描状态）
 - `config/snapshots/weather_events.<timestamp>.json`（版本快照）
+
+Live paper 会输出：
+- `outputs/live_trades.csv`（交易明细）
+- `outputs/live_summary.csv`（每次评估快照：tick、PnL、持仓、胜率）
 
 ## 安装定时任务（cron）
 

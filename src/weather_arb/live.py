@@ -37,6 +37,7 @@ class LiveRunnerConfig:
     eval_every_ticks: int = 10
     history_limit: int = 5000
     out_csv: str = "outputs/live_trades.csv"
+    summary_csv: str = "outputs/live_summary.csv"
 
 
 class LivePaperRunner:
@@ -69,7 +70,7 @@ class LivePaperRunner:
         if market_prob is None:
             return None
 
-        ts = tick.get("timestamp") or tick.get("updatedAt") or tick.get("ts") or pd.Timestamp.utcnow().isoformat()
+        ts = tick.get("timestamp") or tick.get("updatedAt") or tick.get("ts") or pd.Timestamp.now("UTC").isoformat()
         model_probs = self.forecast_provider.get_probabilities(str(event_id), tick)
 
         return {
@@ -78,6 +79,26 @@ class LivePaperRunner:
             "market_prob": float(market_prob),
             **model_probs,
         }
+
+    def _append_summary_row(self, market_id: str, summary: dict[str, Any], n_new: int) -> None:
+        out_path = Path(self.cfg.summary_csv)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        row = {
+            "logged_at": pd.Timestamp.now("UTC").isoformat(),
+            "market_id": market_id,
+            "tick_count": self.tick_count,
+            "n_trades": int(summary.get("n_trades", 0) or 0),
+            "new_trades": int(n_new),
+            "open_positions": int(summary.get("open_positions", 0) or 0),
+            "total_pnl": float(summary.get("total_pnl", 0.0) or 0.0),
+            "avg_pnl": float(summary.get("avg_pnl", 0.0) or 0.0),
+            "win_rate": float(summary.get("win_rate", 0.0) or 0.0),
+        }
+
+        df = pd.DataFrame([row])
+        write_header = not out_path.exists()
+        df.to_csv(out_path, mode="a", header=write_header, index=False)
 
     def _dump_new_trades(self, trades: pd.DataFrame) -> int:
         if trades.empty:
@@ -119,17 +140,33 @@ class LivePaperRunner:
         result = self.engine.run(df)
         summary = result["summary"]
         n_new = self._dump_new_trades(result["trades"])
+        self._append_summary_row(row["event_id"], summary, n_new)
 
         print(
             f"[live] ticks={self.tick_count} trades={summary.get('n_trades', 0)} "
-            f"new_trades={n_new} total_pnl={summary.get('total_pnl', 0.0):.4f}"
+            f"new_trades={n_new} total_pnl={summary.get('total_pnl', 0.0):.4f} "
+            f"open_positions={summary.get('open_positions', 0)}"
         )
 
-    async def run_polling(self, streamer, market_id: str) -> None:
-        await streamer.stream_market(market_id, self.on_tick)
+    async def run_polling(self, streamer, market_id: str, max_seconds: float | None = None) -> None:
+        try:
+            if max_seconds and max_seconds > 0:
+                await asyncio.wait_for(streamer.stream_market(market_id, self.on_tick), timeout=max_seconds)
+            else:
+                await streamer.stream_market(market_id, self.on_tick)
+        except asyncio.TimeoutError:
+            streamer.stop()
+            print(f"[live] reached max_seconds={max_seconds}, graceful stop")
 
-    async def run_ws(self, ws_streamer) -> None:
-        await ws_streamer.stream(self.on_tick)
+    async def run_ws(self, ws_streamer, max_seconds: float | None = None) -> None:
+        try:
+            if max_seconds and max_seconds > 0:
+                await asyncio.wait_for(ws_streamer.stream(self.on_tick), timeout=max_seconds)
+            else:
+                await ws_streamer.stream(self.on_tick)
+        except asyncio.TimeoutError:
+            ws_streamer.stop()
+            print(f"[live] reached max_seconds={max_seconds}, graceful stop")
 
 
 def run_async(coro: asyncio.Future) -> None:

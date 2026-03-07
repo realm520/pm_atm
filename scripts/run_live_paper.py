@@ -20,6 +20,8 @@ def main() -> None:
     parser.add_argument("--eval-every", type=int, default=10)
     parser.add_argument("--poll-interval", type=float, default=2.0)
     parser.add_argument("--out-csv", default="outputs/live_trades.csv")
+    parser.add_argument("--summary-csv", default="outputs/live_summary.csv")
+    parser.add_argument("--max-seconds", type=float, default=0, help="Auto-stop after N seconds (0 = run forever)")
     parser.add_argument("--static-prob", type=float, default=0.55, help="Fallback model probability")
     parser.add_argument("--weather-config", default="", help="JSON file: {market_id: {latitude, longitude, variable, threshold, direction, horizon_hours}}")
     args = parser.parse_args()
@@ -39,14 +41,19 @@ def main() -> None:
     runner = LivePaperRunner(
         engine=engine,
         forecast_provider=forecast_provider,
-        config=LiveRunnerConfig(eval_every_ticks=args.eval_every, out_csv=args.out_csv),
+        config=LiveRunnerConfig(
+            eval_every_ticks=args.eval_every,
+            out_csv=args.out_csv,
+            summary_csv=args.summary_csv,
+        ),
     )
 
     if args.mode == "poll":
         if not args.market_id:
             raise ValueError("--market-id is required in poll mode")
         streamer = PollingMarketStreamer(config=RealtimeConfig(poll_interval_sec=args.poll_interval))
-        run_async(runner.run_polling(streamer, args.market_id))
+        max_seconds = args.max_seconds if args.max_seconds and args.max_seconds > 0 else None
+        run_async(runner.run_polling(streamer, args.market_id, max_seconds=max_seconds))
         return
 
     if not args.ws_url:
@@ -57,7 +64,8 @@ def main() -> None:
         subscribe_message = json.loads(args.subscribe_json)
 
     ws_streamer = WebSocketMarketStreamer(ws_url=args.ws_url, subscribe_message=subscribe_message)
-    run_async(runner.run_ws(ws_streamer))
+    max_seconds = args.max_seconds if args.max_seconds and args.max_seconds > 0 else None
+    run_async(runner.run_ws(ws_streamer, max_seconds=max_seconds))
 
 
 if __name__ == "__main__":
