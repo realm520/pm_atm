@@ -53,6 +53,7 @@ class LiveRunnerConfig:
     alert_cooldown_sec: float = 120.0
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    telegram_thread_id: int = 0
 
 
 class LivePaperRunner:
@@ -130,6 +131,8 @@ class LivePaperRunner:
             return
         url = f"https://api.telegram.org/bot{self.cfg.telegram_bot_token}/sendMessage"
         payload = {"chat_id": self.cfg.telegram_chat_id, "text": f"[{level.upper()}] {message}"}
+        if self.cfg.telegram_thread_id > 0:
+            payload["message_thread_id"] = int(self.cfg.telegram_thread_id)
         try:
             requests.post(url, json=payload, timeout=3)
         except Exception:

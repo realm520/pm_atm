@@ -56,6 +56,7 @@ def main() -> None:
     parser.add_argument("--alert-cooldown-sec", type=float, default=120.0, help="Min seconds between identical alert codes")
     parser.add_argument("--telegram-bot-token", default="", help="Optional Telegram bot token for runtime alerts")
     parser.add_argument("--telegram-chat-id", default="", help="Optional Telegram chat id for runtime alerts")
+    parser.add_argument("--telegram-thread-id", type=int, default=0, help="Optional Telegram topic(thread) id for alerts")
     parser.add_argument("--ws-raw-log", default="logs/live_ws_raw.jsonl", help="Raw WS messages for diagnostics")
     parser.add_argument("--max-seconds", type=float, default=0, help="Auto-stop after N seconds (0 = run forever)")
     parser.add_argument("--static-prob", type=float, default=0.55, help="Fallback model probability")
@@ -114,6 +115,7 @@ def main() -> None:
         "max_runtime_errors": args.max_runtime_errors,
         "alert_cooldown_sec": args.alert_cooldown_sec,
         "telegram_alert_enabled": bool(args.telegram_bot_token and args.telegram_chat_id),
+        "telegram_thread_id": args.telegram_thread_id,
         "max_seconds": args.max_seconds,
         "weather_config": args.weather_config,
         "weather_cache_ttl": args.weather_cache_ttl,
@@ -143,6 +145,7 @@ def main() -> None:
             alert_cooldown_sec=args.alert_cooldown_sec,
             telegram_bot_token=args.telegram_bot_token,
             telegram_chat_id=args.telegram_chat_id,
+            telegram_thread_id=args.telegram_thread_id,
         ),
     )
 
