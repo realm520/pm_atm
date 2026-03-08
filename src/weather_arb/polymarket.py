@@ -62,8 +62,8 @@ class PolymarketClient:
 
         raise ValueError(f"No price field found for market {market_id}")
 
-    def market_token_ids(self, market_id: str) -> list[str]:
-        market = self.get_market(market_id)
+    @staticmethod
+    def parse_clob_token_ids(market: dict[str, Any]) -> list[str]:
         raw = market.get("clobTokenIds")
         if isinstance(raw, str) and raw:
             parsed = json.loads(raw)
@@ -72,3 +72,6 @@ class PolymarketClient:
         if isinstance(raw, list):
             return [str(x) for x in raw]
         return []
+
+    def market_token_ids(self, market_id: str) -> list[str]:
+        return self.parse_clob_token_ids(self.get_market(market_id))

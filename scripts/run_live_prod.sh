@@ -89,47 +89,17 @@ preflight_live() {
 
 smoke_live() {
   check_env
-  if [[ -z "${SMOKE_TOKEN_ID:-}" ]]; then
-    echo "[smoke] SMOKE_TOKEN_ID not set, fetching a token from Polymarket..."
-    SMOKE_TOKEN_ID=$(uv run python - <<'PYEOF'
-import sys
-import json
-import requests
-CLOB_HOST = "https://clob.polymarket.com"
-try:
-    from weather_arb.polymarket import PolymarketClient
-    client = PolymarketClient()
-    for market in client.list_markets(active=True, limit=20):
-        raw = market.get("clobTokenIds")
-        if isinstance(raw, str) and raw:
-            raw = json.loads(raw)
-        tids = [str(x) for x in raw] if isinstance(raw, list) else []
-        for tid in tids:
-            try:
-                r = requests.get(f"{CLOB_HOST}/tick-size?token_id={tid}", timeout=5)
-                if r.status_code == 200:
-                    print(tid)
-                    sys.exit(0)
-            except requests.RequestException:
-                continue
-except Exception as e:
-    print(f"[smoke] error: {e}", file=sys.stderr)
-sys.exit(1)
-PYEOF
-)
-    if [[ -z "${SMOKE_TOKEN_ID:-}" ]]; then
-      echo "[smoke] failed to auto-fetch token id"
-      exit 1
-    fi
-    echo "[smoke] auto token_id=${SMOKE_TOKEN_ID}"
+  local extra=()
+  if [[ -n "${SMOKE_TOKEN_ID:-}" ]]; then
+    extra+=(--token-id "${SMOKE_TOKEN_ID}")
   fi
   uv run python scripts/smoke_real_order.py \
     --account-name "${POLY_ACCOUNT_NAME}" \
     --vault "${POLY_ACCOUNT_VAULT:-state/polymarket_accounts.json}" \
-    --token-id "${SMOKE_TOKEN_ID}" \
     --price "${SMOKE_PRICE:-0.01}" \
     --size "${SMOKE_SIZE:-1}" \
-    --side "${SMOKE_SIDE:-BUY}"
+    --side "${SMOKE_SIDE:-BUY}" \
+    "${extra[@]}"
 }
 
 health_live() {
