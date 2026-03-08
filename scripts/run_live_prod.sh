@@ -120,7 +120,7 @@ start_live() {
 
   local tg_chat_id="${TG_CHAT_ID:-$TG_CHAT_ID_DEFAULT}"
   local tg_thread_id="${TG_THREAD_ID:-$TG_THREAD_ID_DEFAULT}"
-  local max_seconds="${LIVE_MAX_SECONDS:-21600}"
+  local max_seconds="${LIVE_MAX_SECONDS:-0}"
 
   nohup uv run python -u scripts/run_live_paper.py \
     --mode ws \
