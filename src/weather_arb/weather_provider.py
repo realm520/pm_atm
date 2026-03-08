@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import threading
 import time
 from typing import Any, Callable
 
@@ -45,6 +46,7 @@ class OpenMeteoMultiModelProvider:
         self.cfg = config or OpenMeteoConfig()
         self.http_get = http_get or requests.get
         self._cache: dict[str, tuple[float, dict[str, float]]] = {}
+        self._cache_lock = threading.Lock()
 
     def _fetch_series(self, cfg: WeatherEventConfig) -> dict[str, np.ndarray]:
         params = {
@@ -124,9 +126,10 @@ class OpenMeteoMultiModelProvider:
             }
 
         now = time.time()
-        cached = self._cache.get(event_id)
-        if cached and now - cached[0] <= self.cfg.cache_ttl_sec:
-            return cached[1]
+        with self._cache_lock:
+            cached = self._cache.get(event_id)
+            if cached and now - cached[0] <= self.cfg.cache_ttl_sec:
+                return cached[1]
 
         try:
             params = {
@@ -157,7 +160,8 @@ class OpenMeteoMultiModelProvider:
                     "ukmo_prob": p,
                     "cmc_prob": p,
                 }
-            self._cache[event_id] = (now, probs)
+            with self._cache_lock:
+                self._cache[event_id] = (now, probs)
             return probs
         except requests.RequestException:
             if cached:

@@ -98,7 +98,7 @@ class LivePaperRunner:
         self._halted = False
         self._last_alert_at: dict[str, pd.Timestamp] = {}
 
-    def _normalize_tick(self, tick: dict[str, Any]) -> dict[str, Any] | None:
+    async def _normalize_tick(self, tick: dict[str, Any]) -> dict[str, Any] | None:
         event_id = tick.get("id") or tick.get("market_id") or tick.get("marketId")
         if event_id is None:
             return None
@@ -113,7 +113,10 @@ class LivePaperRunner:
             return None
 
         ts = tick.get("timestamp") or tick.get("updatedAt") or tick.get("ts") or pd.Timestamp.now("UTC").isoformat()
-        model_probs = self.forecast_provider.get_probabilities(str(event_id), tick)
+        loop = asyncio.get_running_loop()
+        model_probs = await loop.run_in_executor(
+            None, self.forecast_provider.get_probabilities, str(event_id), tick
+        )
 
         asset_id = tick.get("asset_id") or tick.get("assetId")
         event_id_str = str(event_id)
@@ -409,7 +412,7 @@ class LivePaperRunner:
             self._trigger_circuit_breaker("kill_switch")
 
         try:
-            row = self._normalize_tick(tick)
+            row = await self._normalize_tick(tick)
             if row is None:
                 return
 

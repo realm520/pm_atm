@@ -48,7 +48,7 @@ def test_live_runner_normalize_and_dump(tmp_path: Path) -> None:
         ),
     )
 
-    row = runner._normalize_tick({"id": "m1", "price": 0.52, "timestamp": "2026-01-01T00:00:00Z"})
+    row = asyncio.run(runner._normalize_tick({"id": "m1", "price": 0.52, "timestamp": "2026-01-01T00:00:00Z"}))
     assert row is not None
     assert row["event_id"] == "m1"
     assert 0.0 < row["ecmwf_prob"] < 1.0
