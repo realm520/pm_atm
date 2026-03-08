@@ -133,7 +133,7 @@ start_live() {
     --strategy-config config/strategy.prod.conservative.json \
     --risk-config config/risk.prod.conservative.json \
     --engine-config config/engine.prod.conservative.json \
-    --hard-daily-loss-limit -12 \
+    --hard-daily-loss-limit "${HARD_DAILY_LOSS_LIMIT:--4}" \
     --max-runtime-errors 50 \
     --kill-switch-path "$STOP_FILE" \
     --alerts-jsonl logs/live_alerts_ws_all_6h.jsonl \
