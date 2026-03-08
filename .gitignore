@@ -7,3 +7,4 @@ config/*.log
 logs/*.log
 logs/*.jsonl
 logs/live_run_meta.json
+state/
