@@ -120,10 +120,13 @@ class LivePaperRunner:
         if asset_id:
             self.event_latest_asset_id[event_id_str] = str(asset_id)
 
+        market_question = tick.get("market_question") or tick.get("question") or tick.get("title") or ""
+
         return {
             "ts": ts,
             "event_id": event_id_str,
             "market_prob": float(market_prob),
+            "market_question": str(market_question),
             **model_probs,
         }
 
@@ -311,6 +314,9 @@ class LivePaperRunner:
         if sig_df.empty:
             return
 
+        cfg = getattr(self.engine.strategy, "cfg", None)
+        is_premarket_no = hasattr(cfg, "take_profit_no_price")
+
         event_id = str(row["event_id"])
         cur_rows = sig_df[sig_df["event_id"].astype(str) == event_id]
         if cur_rows.empty:
@@ -320,17 +326,35 @@ class LivePaperRunner:
         z = cur.get("mispricing_z")
         signal = int(cur.get("entry_dir", 0) or 0)
         market_prob = float(cur.get("market_prob") or row.get("market_prob") or 0.5)
+        no_price = 1.0 - market_prob
 
         pos = self.live_positions.get(event_id)
         if pos is None:
-            if signal == 0 or z is None or not math.isfinite(float(z)):
+            if signal == 0:
                 return
-            if signal > 0:
-                side = OrderSide.BUY
-                live_side = "LONG_YES"
-            else:
+
+            if not is_premarket_no and (z is None or not math.isfinite(float(z))):
+                return
+
+            max_active = int(getattr(cfg, "target_max_active_positions", 0) or 0)
+            if max_active > 0 and len(self.live_positions) >= max_active:
+                self._append_event("execution_skip", {"reason": "max_active_positions", "event_id": event_id, "max_active": max_active})
+                return
+
+            if is_premarket_no:
+                # Long NO == short YES in execution layer
                 side = OrderSide.SELL
-                live_side = "SHORT_YES"
+                live_side = "LONG_NO"
+                entry_ref_price = no_price
+            else:
+                if signal > 0:
+                    side = OrderSide.BUY
+                    live_side = "LONG_YES"
+                else:
+                    side = OrderSide.SELL
+                    live_side = "SHORT_YES"
+                entry_ref_price = market_prob
+
             self._submit_execution_intent(
                 event_id=event_id,
                 side=side,
@@ -341,23 +365,33 @@ class LivePaperRunner:
             )
             self.live_positions[event_id] = {
                 "side": live_side,
-                "entry_price": market_prob,
+                "entry_price": entry_ref_price,
                 "hold_steps": 0,
                 "entry_ts": cur.get("ts") or row.get("ts"),
             }
             return
 
         pos["hold_steps"] = int(pos.get("hold_steps", 0)) + 1
-        gross = (market_prob - float(pos.get("entry_price", market_prob))) if pos["side"] == "LONG_YES" else (float(pos.get("entry_price", market_prob)) - market_prob)
-        should_exit = (
-            (z is not None and math.isfinite(float(z)) and abs(float(z)) <= self.engine.strategy.cfg.exit_z)
-            or pos["hold_steps"] >= self.engine.strategy.cfg.max_holding_steps
-            or gross <= self.engine.strategy.cfg.stop_loss
-        )
+
+        if pos["side"] == "LONG_NO" and is_premarket_no:
+            gross = no_price - float(pos.get("entry_price", no_price))
+            should_exit = (
+                no_price >= float(getattr(cfg, "take_profit_no_price", 0.95))
+                or pos["hold_steps"] >= int(getattr(cfg, "max_holding_steps", 240))
+            )
+            exit_side = OrderSide.BUY
+        else:
+            gross = (market_prob - float(pos.get("entry_price", market_prob))) if pos["side"] == "LONG_YES" else (float(pos.get("entry_price", market_prob)) - market_prob)
+            should_exit = (
+                (z is not None and math.isfinite(float(z)) and abs(float(z)) <= self.engine.strategy.cfg.exit_z)
+                or pos["hold_steps"] >= self.engine.strategy.cfg.max_holding_steps
+                or gross <= self.engine.strategy.cfg.stop_loss
+            )
+            exit_side = OrderSide.SELL if pos["side"] == "LONG_YES" else OrderSide.BUY
+
         if not should_exit:
             return
 
-        exit_side = OrderSide.SELL if pos["side"] == "LONG_YES" else OrderSide.BUY
         self._submit_execution_intent(
             event_id=event_id,
             side=exit_side,

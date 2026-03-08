@@ -7,6 +7,7 @@ from weather_arb.engine import PaperArbEngine
 import pytest
 
 from weather_arb.live import CircuitBreakerTriggered, LivePaperRunner, LiveRunnerConfig, StaticForecastProvider
+from weather_arb.strategy_premarket_no import PremarketNoConfig, PremarketNoLadderStrategy
 
 
 class DummyExecutionService:
@@ -188,3 +189,40 @@ def test_live_runner_submit_execution_from_signal_entry_and_exit(tmp_path: Path)
     )
     assert len(exec_svc.submitted) == 2
     assert exec_svc.submitted[1]["side"] == "SELL"
+
+
+def test_live_runner_premarket_no_maps_to_short_yes_and_respects_max_active(tmp_path: Path) -> None:
+    exec_svc = DummyExecutionService(hard_stop=False)
+    strategy = PremarketNoLadderStrategy(PremarketNoConfig(target_max_active_positions=1, max_holding_steps=1000))
+    engine = PaperArbEngine(strategy=strategy)
+
+    runner = LivePaperRunner(
+        engine=engine,
+        forecast_provider=StaticForecastProvider(0.6),
+        config=LiveRunnerConfig(
+            eval_every_ticks=1,
+            out_csv=str(tmp_path / "live_trades.csv"),
+            summary_csv=str(tmp_path / "live_summary.csv"),
+            events_jsonl=str(tmp_path / "events.jsonl"),
+            error_log=str(tmp_path / "errors.log"),
+            alerts_jsonl=str(tmp_path / "alerts.jsonl"),
+            hard_daily_loss_limit=-999,
+        ),
+        execution_service=exec_svc,
+    )
+
+    runner.event_latest_asset_id["m1"] = "a1"
+    runner.event_latest_asset_id["m2"] = "a2"
+
+    df = pd.DataFrame(
+        [
+            {"event_id": "m1", "ts": 1, "market_prob": 0.2, "market_question": "Will FDV exceed $10B?"},
+            {"event_id": "m2", "ts": 1, "market_prob": 0.2, "market_question": "Will FDV exceed $20B?"},
+        ]
+    )
+
+    runner._process_execution_signals(df, {"event_id": "m1", "market_prob": 0.2, "ts": 1}, {"best_bid": 0.2, "best_ask": 0.21})
+    runner._process_execution_signals(df, {"event_id": "m2", "market_prob": 0.2, "ts": 1}, {"best_bid": 0.2, "best_ask": 0.21})
+
+    assert len(exec_svc.submitted) == 1
+    assert exec_svc.submitted[0]["side"] == "SELL"
