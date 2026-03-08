@@ -193,9 +193,13 @@ class PolymarketWSStreamer(WebSocketMarketStreamer):
 
     async def stream(self, on_tick: TickHandler) -> None:
         self._stopped = False
+        _raw_msg_count = 0
+        _tick_count = 0
         while not self._stopped:
             try:
+                print(f"[ws] connecting to {self.ws_url} with {len(self.asset_ids)} asset_ids", flush=True)
                 async with websockets.connect(self.ws_url, ping_interval=20, ping_timeout=20) as ws:
+                    print(f"[ws] connected, subscribing...", flush=True)
                     if self._custom_subscribe_message:
                         await ws.send(json.dumps(self._custom_subscribe_message))
                     else:
@@ -218,6 +222,7 @@ class PolymarketWSStreamer(WebSocketMarketStreamer):
                             await ws.send(json.dumps({"operation": "subscribe", "assets_ids": chunk, "level": 2, "custom_feature_enabled": True}))
                             await asyncio.sleep(0.05)
 
+                    print(f"[ws] subscribed, waiting for messages...", flush=True)
                     ping_task = asyncio.create_task(self._ping_loop(ws))
                     try:
                         async for message in ws:
@@ -227,6 +232,11 @@ class PolymarketWSStreamer(WebSocketMarketStreamer):
                                 continue
                             if message == "PONG":
                                 continue
+                            _raw_msg_count += 1
+                            if _raw_msg_count <= 5:
+                                print(f"[ws][debug] raw msg #{_raw_msg_count}: {message[:200]}", flush=True)
+                            elif _raw_msg_count == 6:
+                                print(f"[ws][debug] further raw msgs suppressed (suppressing after 5)", flush=True)
                             self._append_raw(message)
                             try:
                                 payload = json.loads(message)
@@ -242,9 +252,17 @@ class PolymarketWSStreamer(WebSocketMarketStreamer):
                                 continue
 
                             for p in payloads:
-                                for tick in self._normalize_payload(p):
+                                ticks = self._normalize_payload(p)
+                                if not ticks and _raw_msg_count <= 10:
+                                    evt = p.get("event_type") or p.get("type") or "?"
+                                    print(f"[ws][debug] msg filtered (no ticks): event_type={evt}, keys={list(p.keys())[:6]}", flush=True)
+                                for tick in ticks:
+                                    _tick_count += 1
+                                    if _tick_count <= 3:
+                                        print(f"[ws][debug] tick #{_tick_count}: event_id={tick.get('id')}, price={tick.get('price')}", flush=True)
                                     await on_tick(tick)
                     finally:
                         ping_task.cancel()
-            except (OSError, WebSocketException):
+            except (OSError, WebSocketException) as exc:
+                print(f"[ws] connection error: {type(exc).__name__}: {exc}, retrying in {self.cfg.reconnect_delay_sec}s", flush=True)
                 await asyncio.sleep(self.cfg.reconnect_delay_sec)

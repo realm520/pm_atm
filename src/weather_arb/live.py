@@ -94,13 +94,17 @@ class LivePaperRunner:
         self.live_positions: dict[str, dict[str, Any]] = {}
         self.execution_submitted_keys: set[str] = set()
         self.tick_count = 0
+        self._raw_tick_attempts = 0
         self.runtime_error_count = 0
         self._halted = False
         self._last_alert_at: dict[str, pd.Timestamp] = {}
 
     async def _normalize_tick(self, tick: dict[str, Any]) -> dict[str, Any] | None:
+        self._raw_tick_attempts += 1
         event_id = tick.get("id") or tick.get("market_id") or tick.get("marketId")
         if event_id is None:
+            if self._raw_tick_attempts <= 20:
+                self._safe_print(f"[live][debug] tick dropped: no event_id, keys={list(tick.keys())[:8]}")
             return None
 
         market_prob = (
@@ -110,6 +114,8 @@ class LivePaperRunner:
             or tick.get("price")
         )
         if market_prob is None:
+            if self._raw_tick_attempts <= 20:
+                self._safe_print(f"[live][debug] tick dropped: no price, event_id={event_id}, keys={list(tick.keys())[:8]}")
             return None
 
         ts = tick.get("timestamp") or tick.get("updatedAt") or tick.get("ts") or pd.Timestamp.now("UTC").isoformat()
@@ -484,6 +490,7 @@ class LivePaperRunner:
             raise
 
     async def run_ws(self, ws_streamer, max_seconds: float | None = None) -> None:
+        self._safe_print(f"[live] run_ws starting, max_seconds={max_seconds}")
         self._append_event("run_start", {"mode": "ws", "max_seconds": max_seconds})
         try:
             if max_seconds and max_seconds > 0:

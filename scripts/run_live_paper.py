@@ -156,6 +156,7 @@ def main() -> None:
 
     execution_service = None
     if args.execution_mode in {"live", "live-sim", "live-sdk"}:
+        print(f"[startup] execution_mode={args.execution_mode}, initializing order store at {args.orders_db}", flush=True)
         store = SqliteOrderStore(args.orders_db)
         if args.execution_mode == "live-sim":
             execution_service = ExecutionService(store=store, exchange=SimExchangeExecutor(fill_after_sec=0.2))
@@ -165,8 +166,11 @@ def main() -> None:
             private_key = os.environ.get("POLY_PRIVATE_KEY", "")
             if not private_key:
                 raise ValueError("POLY_PRIVATE_KEY env is required in --execution-mode live-sdk")
+            print(f"[startup] loading account={args.poly_account_name} from vault={args.poly_account_vault}", flush=True)
             account = PolymarketAccountManager(args.poly_account_vault).get_account(args.poly_account_name)
+            print(f"[startup] account loaded: name={account.name} wallet={account.wallet_address} chain={account.chain_id}", flush=True)
             execution_service = ExecutionService(store=store, exchange=PolymarketSdkExecutor(account=account, private_key=private_key))
+            print(f"[startup] live-sdk executor ready", flush=True)
         else:
             if not args.poly_exec_base_url:
                 raise ValueError("--poly-exec-base-url is required in --execution-mode live")
@@ -227,6 +231,7 @@ def main() -> None:
         asset_to_market_id: dict[str, str] = {}
         condition_to_market_id: dict[str, str] = {}
 
+        print(f"[startup] fetching market data for {len(market_ids)} markets: {market_ids[:5]}{'...' if len(market_ids)>5 else ''}", flush=True)
         for mid in market_ids:
             m = client.get_market(str(mid))
             raw_tokens = m.get("clobTokenIds")
@@ -247,6 +252,7 @@ def main() -> None:
         if not asset_ids:
             raise ValueError("No clobTokenIds found for selected market ids")
 
+        print(f"[startup] resolved {len(asset_ids)} asset_ids from {len(market_ids)} markets", flush=True)
         ws_url = args.ws_url or "wss://ws-subscriptions-clob.polymarket.com/ws/market"
         subscribe_message = json.loads(args.subscribe_json) if args.subscribe_json else None
         ws_streamer = PolymarketWSStreamer(
