@@ -97,7 +97,7 @@ smoke_live() {
     --account-name "${POLY_ACCOUNT_NAME}" \
     --vault "${POLY_ACCOUNT_VAULT:-state/polymarket_accounts.json}" \
     --price "${SMOKE_PRICE:-0.01}" \
-    --size "${SMOKE_SIZE:-1}" \
+    --size "${SMOKE_SIZE:-5}" \
     --side "${SMOKE_SIDE:-BUY}" \
     "${extra[@]}"
 }
