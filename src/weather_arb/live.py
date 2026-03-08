@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Any, Protocol
 import traceback
@@ -88,8 +89,8 @@ class LivePaperRunner:
         self.rows: list[dict[str, Any]] = []
         self.seen_trade_keys: set[str] = set()
         self.event_latest_asset_id: dict[str, str] = {}
+        self.live_positions: dict[str, dict[str, Any]] = {}
         self.execution_submitted_keys: set[str] = set()
-        self.last_new_trade_rows: list[dict[str, Any]] = []
         self.tick_count = 0
         self.runtime_error_count = 0
         self._halted = False
@@ -220,7 +221,6 @@ class LivePaperRunner:
         self._append_event("summary", row)
 
     def _dump_new_trades(self, trades: pd.DataFrame) -> int:
-        self.last_new_trade_rows = []
         if trades.empty:
             return 0
 
@@ -243,61 +243,108 @@ class LivePaperRunner:
         new_df.to_csv(out_path, mode="a", header=write_header, index=False)
         for r in new_rows:
             self._append_event("trade", r)
-        self.last_new_trade_rows = new_rows
         return len(new_df)
 
-    def _submit_execution_from_new_trades(self) -> None:
+    def _submit_execution_intent(self, *, event_id: str, side: OrderSide, qty: float, limit_price: float, action: str, ts: Any) -> None:
         if self.execution_service is None:
             return
-        if not self.last_new_trade_rows:
+        asset_id = self.event_latest_asset_id.get(event_id)
+        if not asset_id:
+            self._append_alert("warning", "execution_skip_no_asset", f"skip {action} {event_id}: missing asset_id mapping")
             return
 
-        for r in self.last_new_trade_rows:
-            event_id = str(r.get("event_id") or "")
-            if not event_id:
-                continue
-            key = f"{event_id}|{r.get('entry_ts')}|{r.get('exit_ts')}|{r.get('side')}"
-            if key in self.execution_submitted_keys:
-                continue
+        key = f"{action}|{event_id}|{ts}|{side.value}"
+        if key in self.execution_submitted_keys:
+            return
 
-            asset_id = self.event_latest_asset_id.get(event_id)
-            if not asset_id:
-                self._append_alert("warning", "execution_skip_no_asset", f"skip trade {key}: missing asset_id mapping")
-                continue
+        intent = ExecutionIntent(
+            event_id=event_id,
+            asset_id=asset_id,
+            side=side,
+            qty=float(max(0.001, qty)),
+            limit_price=min(0.999, max(0.001, float(limit_price))),
+            timeout_sec=15.0,
+            client_order_id=f"live-{key}",
+        )
+        self.execution_service.submit(intent)
+        self.execution_submitted_keys.add(key)
+        self._append_event(
+            "execution_submit",
+            {
+                "action": action,
+                "event_id": event_id,
+                "asset_id": asset_id,
+                "side": side.value,
+                "qty": intent.qty,
+                "limit_price": intent.limit_price,
+                "client_order_id": intent.client_order_id,
+            },
+        )
 
-            side_raw = str(r.get("side") or "")
-            if side_raw == "LONG_YES":
+    def _process_execution_signals(self, df: pd.DataFrame, row: dict[str, Any]) -> None:
+        if self.execution_service is None or df.empty:
+            return
+
+        sig_df = self.engine.strategy.generate_signals(df)
+        if sig_df.empty:
+            return
+
+        event_id = str(row["event_id"])
+        cur_rows = sig_df[sig_df["event_id"].astype(str) == event_id]
+        if cur_rows.empty:
+            return
+        cur = cur_rows.iloc[-1]
+
+        z = cur.get("mispricing_z")
+        signal = int(cur.get("entry_dir", 0) or 0)
+        market_prob = float(cur.get("market_prob") or row.get("market_prob") or 0.5)
+
+        pos = self.live_positions.get(event_id)
+        if pos is None:
+            if signal == 0 or z is None or not math.isfinite(float(z)):
+                return
+            if signal > 0:
                 side = OrderSide.BUY
-            elif side_raw == "SHORT_YES":
-                side = OrderSide.SELL
+                live_side = "LONG_YES"
             else:
-                self._append_alert("warning", "execution_skip_bad_side", f"skip trade {key}: unknown side={side_raw}")
-                continue
-
-            qty = float(self.engine.cfg.base_trade_qty)
-            limit_price = float(r.get("exit_price") or r.get("entry_price") or 0.5)
-            intent = ExecutionIntent(
+                side = OrderSide.SELL
+                live_side = "SHORT_YES"
+            self._submit_execution_intent(
                 event_id=event_id,
-                asset_id=asset_id,
                 side=side,
-                qty=qty,
-                limit_price=min(0.999, max(0.001, limit_price)),
-                timeout_sec=15.0,
-                client_order_id=f"live-{key}",
+                qty=float(self.engine.cfg.base_trade_qty),
+                limit_price=market_prob,
+                action="entry",
+                ts=cur.get("ts") or row.get("ts"),
             )
-            self.execution_service.submit(intent)
-            self.execution_submitted_keys.add(key)
-            self._append_event(
-                "execution_submit",
-                {
-                    "event_id": event_id,
-                    "asset_id": asset_id,
-                    "side": side.value,
-                    "qty": qty,
-                    "limit_price": limit_price,
-                    "client_order_id": intent.client_order_id,
-                },
-            )
+            self.live_positions[event_id] = {
+                "side": live_side,
+                "entry_price": market_prob,
+                "hold_steps": 0,
+                "entry_ts": cur.get("ts") or row.get("ts"),
+            }
+            return
+
+        pos["hold_steps"] = int(pos.get("hold_steps", 0)) + 1
+        gross = (market_prob - float(pos.get("entry_price", market_prob))) if pos["side"] == "LONG_YES" else (float(pos.get("entry_price", market_prob)) - market_prob)
+        should_exit = (
+            (z is not None and math.isfinite(float(z)) and abs(float(z)) <= self.engine.strategy.cfg.exit_z)
+            or pos["hold_steps"] >= self.engine.strategy.cfg.max_holding_steps
+            or gross <= self.engine.strategy.cfg.stop_loss
+        )
+        if not should_exit:
+            return
+
+        exit_side = OrderSide.SELL if pos["side"] == "LONG_YES" else OrderSide.BUY
+        self._submit_execution_intent(
+            event_id=event_id,
+            side=exit_side,
+            qty=float(self.engine.cfg.base_trade_qty),
+            limit_price=market_prob,
+            action="exit",
+            ts=cur.get("ts") or row.get("ts"),
+        )
+        self.live_positions.pop(event_id, None)
 
     async def on_tick(self, tick: dict[str, Any]) -> None:
         if self._halted:
@@ -319,10 +366,11 @@ class LivePaperRunner:
                 return
 
             df = pd.DataFrame(self.rows)
+            self._process_execution_signals(df, row)
+
             result = self.engine.run(df)
             summary = result["summary"]
             n_new = self._dump_new_trades(result["trades"])
-            self._submit_execution_from_new_trades()
             self._append_summary_row(row["event_id"], summary, n_new)
 
             total_pnl = float(summary.get("total_pnl", 0.0) or 0.0)

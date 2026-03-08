@@ -124,7 +124,7 @@ def test_live_runner_circuit_breaker_by_execution_hard_stop(tmp_path: Path) -> N
         asyncio.run(runner.on_tick({"id": "m1", "price": 0.52, "timestamp": "2026-01-01T00:00:00Z"}))
 
 
-def test_live_runner_submit_execution_from_new_trades(tmp_path: Path) -> None:
+def test_live_runner_submit_execution_from_signal_entry_and_exit(tmp_path: Path) -> None:
     exec_svc = DummyExecutionService(hard_stop=False)
     runner = LivePaperRunner(
         engine=PaperArbEngine(),
@@ -142,18 +142,41 @@ def test_live_runner_submit_execution_from_new_trades(tmp_path: Path) -> None:
     )
 
     runner.event_latest_asset_id["m1"] = "a1"
-    runner.last_new_trade_rows = [
+    df = pd.DataFrame([
         {
+            "ts": "t1",
             "event_id": "m1",
-            "entry_ts": "t1",
-            "exit_ts": "t2",
-            "side": "LONG_YES",
-            "entry_price": 0.45,
-            "exit_price": 0.47,
+            "market_prob": 0.4,
+            "ecmwf_prob": 0.99,
+            "gfs_prob": 0.99,
+            "hrrr_prob": 0.99,
+            "nam_prob": 0.99,
+            "ukmo_prob": 0.99,
+            "cmc_prob": 0.99,
         }
-    ]
-    runner._submit_execution_from_new_trades()
+    ])
+
+    def fake_entry(_df):
+        out = _df.copy()
+        out["mispricing_z"] = 2.0
+        out["entry_dir"] = 1
+        return out
+
+    runner.engine.strategy.generate_signals = fake_entry  # type: ignore[method-assign]
+    runner._process_execution_signals(df, {"event_id": "m1", "market_prob": 0.4, "ts": "t1"})
 
     assert len(exec_svc.submitted) == 1
     assert exec_svc.submitted[0]["event_id"] == "m1"
     assert exec_svc.submitted[0]["asset_id"] == "a1"
+    assert exec_svc.submitted[0]["side"] == "BUY"
+
+    def fake_exit(_df):
+        out = _df.copy()
+        out["mispricing_z"] = 0.0
+        out["entry_dir"] = 0
+        return out
+
+    runner.engine.strategy.generate_signals = fake_exit  # type: ignore[method-assign]
+    runner._process_execution_signals(df, {"event_id": "m1", "market_prob": 0.41, "ts": "t2"})
+    assert len(exec_svc.submitted) == 2
+    assert exec_svc.submitted[1]["side"] == "SELL"
