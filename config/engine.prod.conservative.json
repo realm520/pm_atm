@@ -1,6 +1,6 @@
 {
-  "base_trade_qty": 5.0,
-  "cold_market_trade_qty": 5.0,
+  "base_trade_qty": 1.0,
+  "cold_market_trade_qty": 0.5,
   "hot_market_spread_threshold": 0.02,
   "low_liquidity_spread_threshold": 0.05,
   "entry_z_low_liquidity_add": 0.8

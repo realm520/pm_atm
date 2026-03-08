@@ -1,9 +1,9 @@
 {
-  "max_positions": 3,
-  "max_event_notional": 4.0,
-  "max_total_notional": 7.0,
-  "daily_loss_limit": -3.0,
-  "per_event_daily_loss_limit": -2.0,
-  "max_consecutive_losses": 2,
-  "cooldown_steps": 120
+  "max_positions": 8,
+  "max_event_notional": 2.0,
+  "max_total_notional": 8.0,
+  "daily_loss_limit": -2.5,
+  "per_event_daily_loss_limit": -1.0,
+  "max_consecutive_losses": 3,
+  "cooldown_steps": 50
 }
