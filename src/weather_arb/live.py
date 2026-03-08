@@ -59,6 +59,8 @@ class LiveRunnerConfig:
     hard_daily_loss_limit: float = -12.0
     max_runtime_errors: int = 50
     alert_cooldown_sec: float = 120.0
+    entry_price_buffer: float = 0.003
+    exit_price_buffer: float = 0.002
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_thread_id: int = 0
@@ -245,6 +247,26 @@ class LivePaperRunner:
             self._append_event("trade", r)
         return len(new_df)
 
+    @staticmethod
+    def _clamp_price(v: float) -> float:
+        return min(0.999, max(0.001, float(v)))
+
+    def _limit_price_from_tick(self, tick: dict[str, Any], *, side: OrderSide, action: str, fallback: float) -> float:
+        best_bid = tick.get("bestBid") or tick.get("best_bid")
+        best_ask = tick.get("bestAsk") or tick.get("best_ask")
+        b = self.cfg.entry_price_buffer if action == "entry" else self.cfg.exit_price_buffer
+
+        try:
+            if side == OrderSide.BUY:
+                if best_ask is not None:
+                    return self._clamp_price(float(best_ask) + b)
+                return self._clamp_price(float(fallback) + b)
+            if best_bid is not None:
+                return self._clamp_price(float(best_bid) - b)
+            return self._clamp_price(float(fallback) - b)
+        except Exception:
+            return self._clamp_price(fallback)
+
     def _submit_execution_intent(self, *, event_id: str, side: OrderSide, qty: float, limit_price: float, action: str, ts: Any) -> None:
         if self.execution_service is None:
             return
@@ -262,7 +284,7 @@ class LivePaperRunner:
             asset_id=asset_id,
             side=side,
             qty=float(max(0.001, qty)),
-            limit_price=min(0.999, max(0.001, float(limit_price))),
+            limit_price=self._clamp_price(float(limit_price)),
             timeout_sec=15.0,
             client_order_id=f"live-{key}",
         )
@@ -281,7 +303,7 @@ class LivePaperRunner:
             },
         )
 
-    def _process_execution_signals(self, df: pd.DataFrame, row: dict[str, Any]) -> None:
+    def _process_execution_signals(self, df: pd.DataFrame, row: dict[str, Any], tick: dict[str, Any]) -> None:
         if self.execution_service is None or df.empty:
             return
 
@@ -313,7 +335,7 @@ class LivePaperRunner:
                 event_id=event_id,
                 side=side,
                 qty=float(self.engine.cfg.base_trade_qty),
-                limit_price=market_prob,
+                limit_price=self._limit_price_from_tick(tick, side=side, action="entry", fallback=market_prob),
                 action="entry",
                 ts=cur.get("ts") or row.get("ts"),
             )
@@ -340,7 +362,7 @@ class LivePaperRunner:
             event_id=event_id,
             side=exit_side,
             qty=float(self.engine.cfg.base_trade_qty),
-            limit_price=market_prob,
+            limit_price=self._limit_price_from_tick(tick, side=exit_side, action="exit", fallback=market_prob),
             action="exit",
             ts=cur.get("ts") or row.get("ts"),
         )
@@ -366,7 +388,7 @@ class LivePaperRunner:
                 return
 
             df = pd.DataFrame(self.rows)
-            self._process_execution_signals(df, row)
+            self._process_execution_signals(df, row, tick)
 
             result = self.engine.run(df)
             summary = result["summary"]

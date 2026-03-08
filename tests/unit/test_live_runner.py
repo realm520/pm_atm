@@ -163,7 +163,11 @@ def test_live_runner_submit_execution_from_signal_entry_and_exit(tmp_path: Path)
         return out
 
     runner.engine.strategy.generate_signals = fake_entry  # type: ignore[method-assign]
-    runner._process_execution_signals(df, {"event_id": "m1", "market_prob": 0.4, "ts": "t1"})
+    runner._process_execution_signals(
+        df,
+        {"event_id": "m1", "market_prob": 0.4, "ts": "t1"},
+        {"best_ask": 0.401, "best_bid": 0.399},
+    )
 
     assert len(exec_svc.submitted) == 1
     assert exec_svc.submitted[0]["event_id"] == "m1"
@@ -177,6 +181,10 @@ def test_live_runner_submit_execution_from_signal_entry_and_exit(tmp_path: Path)
         return out
 
     runner.engine.strategy.generate_signals = fake_exit  # type: ignore[method-assign]
-    runner._process_execution_signals(df, {"event_id": "m1", "market_prob": 0.41, "ts": "t2"})
+    runner._process_execution_signals(
+        df,
+        {"event_id": "m1", "market_prob": 0.41, "ts": "t2"},
+        {"best_ask": 0.411, "best_bid": 0.409},
+    )
     assert len(exec_svc.submitted) == 2
     assert exec_svc.submitted[1]["side"] == "SELL"
