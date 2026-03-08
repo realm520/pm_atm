@@ -11,6 +11,7 @@ from .orders import ExecutionIntent, Fill, OrderRecord, OrderSide, OrderStatus
 from .polymarket_account import PolymarketAccount, PolymarketAccountManager, PolymarketApiCreds
 from .polymarket_direct_trader import DirectOrderRequest, PolymarketDirectTrader
 from .polymarket_executor import PolymarketExecutionConfig, PolymarketLiveExecutor
+from .polymarket_sdk_executor import PolymarketSdkExecutor, PolymarketSdkExecutorConfig
 from .model_ensemble import DynamicModelEnsembler, EnsembleWeightConfig
 from .risk import RiskConfig, RiskManager
 from .strategy import StrategyConfig, WeatherMispricingStrategy
@@ -46,6 +47,8 @@ __all__ = [
     "PolymarketAccountManager",
     "DirectOrderRequest",
     "PolymarketDirectTrader",
+    "PolymarketSdkExecutor",
+    "PolymarketSdkExecutorConfig",
     "WeatherEventConfig",
     "OpenMeteoMultiModelProvider",
     "GeoCoder",

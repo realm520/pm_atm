@@ -14,17 +14,19 @@ TG_THREAD_ID_DEFAULT="52"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/run_live_prod.sh <check|start|stop|status>
+Usage: scripts/run_live_prod.sh <check|preflight|smoke|start|stop|status|health>
 
 Environment variables required for start/check:
-  POLY_EXEC_BASE_URL   Live execution gateway URL
-  POLY_EXEC_API_KEY    Live execution key (optional if gateway allows)
+  POLY_PRIVATE_KEY     Private key for official SDK live execution
+  POLY_ACCOUNT_NAME    Account name in state/polymarket_accounts.json
   TG_BOT_TOKEN         Telegram bot token for alerts
 
 Optional environment variables:
+  POLY_ACCOUNT_VAULT   Default: state/polymarket_accounts.json
   TG_CHAT_ID           Default: -1003837508045
   TG_THREAD_ID         Default: 52
   LIVE_MAX_SECONDS     Default: 21600
+  SMOKE_TOKEN_ID       Token id for smoke order command
 EOF
 }
 
@@ -34,7 +36,7 @@ ensure_logs_dir() {
 
 check_env() {
   local missing=0
-  for k in POLY_EXEC_BASE_URL TG_BOT_TOKEN; do
+  for k in POLY_PRIVATE_KEY POLY_ACCOUNT_NAME TG_BOT_TOKEN; do
     if [[ -z "${!k:-}" ]]; then
       echo "[check] missing env: $k"
       missing=1
@@ -64,9 +66,37 @@ is_running() {
   return 1
 }
 
+preflight_live() {
+  check_env
+  uv run python scripts/preflight_live.py \
+    --account-name "${POLY_ACCOUNT_NAME}" \
+    --vault "${POLY_ACCOUNT_VAULT:-state/polymarket_accounts.json}" \
+    --require-unblocked
+}
+
+smoke_live() {
+  check_env
+  if [[ -z "${SMOKE_TOKEN_ID:-}" ]]; then
+    echo "[smoke] missing env: SMOKE_TOKEN_ID"
+    exit 1
+  fi
+  uv run python scripts/smoke_real_order.py \
+    --account-name "${POLY_ACCOUNT_NAME}" \
+    --vault "${POLY_ACCOUNT_VAULT:-state/polymarket_accounts.json}" \
+    --token-id "${SMOKE_TOKEN_ID}" \
+    --price "${SMOKE_PRICE:-0.01}" \
+    --size "${SMOKE_SIZE:-1}" \
+    --side "${SMOKE_SIDE:-BUY}"
+}
+
+health_live() {
+  uv run python scripts/live_health_report.py --orders-db state/orders.live.db --minutes "${HEALTH_WINDOW_MIN:-5}"
+}
+
 start_live() {
   ensure_logs_dir
   check_env
+  preflight_live
 
   if is_running; then
     echo "[start] already running: pid=$(cat "$PID_FILE")"
@@ -81,10 +111,10 @@ start_live() {
 
   nohup uv run python -u scripts/run_live_paper.py \
     --mode ws \
-    --execution-mode live \
+    --execution-mode live-sdk \
     --orders-db state/orders.live.db \
-    --poly-exec-base-url "${POLY_EXEC_BASE_URL}" \
-    --poly-exec-api-key "${POLY_EXEC_API_KEY:-}" \
+    --poly-account-name "${POLY_ACCOUNT_NAME}" \
+    --poly-account-vault "${POLY_ACCOUNT_VAULT:-state/polymarket_accounts.json}" \
     --weather-config config/weather_events.generated.json \
     --all-from-weather-config \
     --strategy-config config/strategy.prod.conservative.json \
@@ -144,6 +174,9 @@ status_live() {
 cmd="${1:-}"
 case "$cmd" in
   check) check_env ;;
+  preflight) preflight_live ;;
+  smoke) smoke_live ;;
+  health) health_live ;;
   start) start_live ;;
   stop) stop_live ;;
   status) status_live ;;

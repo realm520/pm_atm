@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -13,7 +14,9 @@ from weather_arb.exchange_sim import SimExchangeExecutor
 from weather_arb.live import LivePaperRunner, LiveRunnerConfig, StaticForecastProvider, run_async
 from weather_arb.order_store import SqliteOrderStore
 from weather_arb.polymarket import PolymarketClient
+from weather_arb.polymarket_account import PolymarketAccountManager
 from weather_arb.polymarket_executor import PolymarketExecutionConfig, PolymarketLiveExecutor
+from weather_arb.polymarket_sdk_executor import PolymarketSdkExecutor
 from weather_arb.realtime import PollingMarketStreamer, PolymarketWSStreamer, RealtimeConfig, WebSocketMarketStreamer
 from weather_arb.risk import RiskConfig
 from weather_arb.strategy import StrategyConfig
@@ -71,10 +74,12 @@ def main() -> None:
     parser.add_argument("--risk-config", default="", help="JSON file for RiskConfig overrides")
     parser.add_argument("--execution-config", default="", help="JSON file for ExecutionConfig overrides")
     parser.add_argument("--engine-config", default="", help="JSON file for EngineConfig overrides")
-    parser.add_argument("--execution-mode", choices=["paper", "live-sim", "live"], default="paper")
+    parser.add_argument("--execution-mode", choices=["paper", "live-sim", "live", "live-sdk"], default="paper")
     parser.add_argument("--orders-db", default="state/orders.db", help="Order state sqlite path")
     parser.add_argument("--poly-exec-base-url", default="", help="Live execution gateway base URL")
     parser.add_argument("--poly-exec-api-key", default="", help="Live execution API key")
+    parser.add_argument("--poly-account-name", default="", help="Account name in vault for live-sdk mode")
+    parser.add_argument("--poly-account-vault", default="state/polymarket_accounts.json", help="Account vault path for live-sdk mode")
     args = parser.parse_args()
 
     strategy_cfg = _load_dataclass_config(args.strategy_config or None, StrategyConfig)
@@ -136,15 +141,25 @@ def main() -> None:
         "execution_mode": args.execution_mode,
         "orders_db": args.orders_db,
         "poly_exec_base_url": bool(args.poly_exec_base_url),
+        "poly_account_name": args.poly_account_name,
+        "poly_account_vault": args.poly_account_vault,
     }
     with open(args.run_meta, "w", encoding="utf-8") as f:
         json.dump(run_meta, f, ensure_ascii=False, indent=2)
 
     execution_service = None
-    if args.execution_mode in {"live", "live-sim"}:
+    if args.execution_mode in {"live", "live-sim", "live-sdk"}:
         store = SqliteOrderStore(args.orders_db)
         if args.execution_mode == "live-sim":
             execution_service = ExecutionService(store=store, exchange=SimExchangeExecutor(fill_after_sec=0.2))
+        elif args.execution_mode == "live-sdk":
+            if not args.poly_account_name:
+                raise ValueError("--poly-account-name is required in --execution-mode live-sdk")
+            private_key = os.environ.get("POLY_PRIVATE_KEY", "")
+            if not private_key:
+                raise ValueError("POLY_PRIVATE_KEY env is required in --execution-mode live-sdk")
+            account = PolymarketAccountManager(args.poly_account_vault).get_account(args.poly_account_name)
+            execution_service = ExecutionService(store=store, exchange=PolymarketSdkExecutor(account=account, private_key=private_key))
         else:
             if not args.poly_exec_base_url:
                 raise ValueError("--poly-exec-base-url is required in --execution-mode live")

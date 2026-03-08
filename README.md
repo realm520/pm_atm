@@ -159,11 +159,15 @@ uv run python scripts/run_live_paper.py --mode ws \
   --max-seconds 21600
 ```
 
-一键实盘启动脚本（含自检/启动/停止）：
+一键实盘脚本（官方 SDK 实盘链路，含预检/冒烟/启动/健康）：
 
 ```bash
 scripts/run_live_prod.sh check
+scripts/run_live_prod.sh preflight
+# 先设置 SMOKE_TOKEN_ID 再做最小单冒烟
+scripts/run_live_prod.sh smoke
 scripts/run_live_prod.sh start
+scripts/run_live_prod.sh health
 scripts/run_live_prod.sh status
 scripts/run_live_prod.sh stop
 ```
