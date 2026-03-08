@@ -83,6 +83,7 @@ class LivePaperRunner:
         forecast_provider: ForecastProvider,
         config: LiveRunnerConfig | None = None,
         execution_service: ExecutionHealthProvider | None = None,
+        market_yes_no: dict[str, tuple[str, str]] | None = None,
     ) -> None:
         self.engine = engine
         self.forecast_provider = forecast_provider
@@ -91,6 +92,9 @@ class LivePaperRunner:
         self.rows: list[dict[str, Any]] = []
         self.seen_trade_keys: set[str] = set()
         self.event_latest_asset_id: dict[str, str] = {}
+        self.event_yes_asset_id: dict[str, str] = {k: v[0] for k, v in (market_yes_no or {}).items()}
+        self.event_no_asset_id: dict[str, str] = {k: v[1] for k, v in (market_yes_no or {}).items()}
+        self.event_no_latest_tick: dict[str, dict] = {}
         self.live_positions: dict[str, dict[str, Any]] = {}
         self.execution_submitted_keys: set[str] = set()
         self.tick_count = 0
@@ -105,6 +109,15 @@ class LivePaperRunner:
         if event_id is None:
             if self._raw_tick_attempts <= 20:
                 self._safe_print(f"[live][debug] tick dropped: no event_id, keys={list(tick.keys())[:8]}")
+            return None
+
+        event_id_str = str(event_id)
+        asset_id = tick.get("asset_id") or tick.get("assetId")
+
+        # NO token tick: store for SHORT_YES execution, skip strategy evaluation
+        no_asset = self.event_no_asset_id.get(event_id_str)
+        if no_asset and asset_id and str(asset_id) == no_asset:
+            self.event_no_latest_tick[event_id_str] = tick
             return None
 
         market_prob = (
@@ -124,8 +137,6 @@ class LivePaperRunner:
             None, self.forecast_provider.get_probabilities, str(event_id), tick
         )
 
-        asset_id = tick.get("asset_id") or tick.get("assetId")
-        event_id_str = str(event_id)
         if asset_id:
             self.event_latest_asset_id[event_id_str] = str(asset_id)
 
@@ -279,10 +290,17 @@ class LivePaperRunner:
         except Exception:
             return self._clamp_price(fallback)
 
-    def _submit_execution_intent(self, *, event_id: str, side: OrderSide, qty: float, limit_price: float, action: str, ts: Any) -> None:
+    def _no_price(self, event_id: str, fallback: float) -> float:
+        """从 NO token 最新 tick 获取真实 NO 价格，如无数据则回退到 1-YES_price。"""
+        t = self.event_no_latest_tick.get(event_id, {})
+        v = t.get("lastTradePrice") or t.get("last_trade_price") or t.get("price")
+        return float(v) if v is not None else fallback
+
+    def _submit_execution_intent(self, *, event_id: str, side: OrderSide, qty: float, limit_price: float, action: str, ts: Any, asset_id: str | None = None) -> None:
         if self.execution_service is None:
             return
-        asset_id = self.event_latest_asset_id.get(event_id)
+        if asset_id is None:
+            asset_id = self.event_latest_asset_id.get(event_id)
         if not asset_id:
             self._append_alert("warning", "execution_skip_no_asset", f"skip {action} {event_id}: missing asset_id mapping")
             return
@@ -359,18 +377,33 @@ class LivePaperRunner:
                 if signal > 0:
                     side = OrderSide.BUY
                     live_side = "LONG_YES"
+                    entry_ref_price = market_prob
+                    entry_asset_id = None  # 使用 YES token（默认）
+                    entry_tick = tick
                 else:
-                    side = OrderSide.SELL
+                    # SHORT_YES：做多 NO token，需要 NO token asset_id 和真实 NO 价格
+                    no_asset_id = self.event_no_asset_id.get(event_id)
+                    if not no_asset_id:
+                        self._append_event("execution_skip", {"reason": "short_yes_no_asset_id", "event_id": event_id})
+                        return
+                    no_tick = self.event_no_latest_tick.get(event_id)
+                    if not no_tick:
+                        self._append_event("execution_skip", {"reason": "short_yes_no_tick_yet", "event_id": event_id})
+                        return
+                    side = OrderSide.BUY
                     live_side = "SHORT_YES"
-                entry_ref_price = market_prob
+                    entry_ref_price = self._no_price(event_id, 1.0 - market_prob)
+                    entry_asset_id = no_asset_id
+                    entry_tick = no_tick
 
             self._submit_execution_intent(
                 event_id=event_id,
                 side=side,
                 qty=float(self.engine.cfg.base_trade_qty),
-                limit_price=self._limit_price_from_tick(tick, side=side, action="entry", fallback=market_prob),
+                limit_price=self._limit_price_from_tick(entry_tick, side=side, action="entry", fallback=entry_ref_price),
                 action="entry",
                 ts=cur.get("ts") or row.get("ts"),
+                asset_id=entry_asset_id,
             )
             self.live_positions[event_id] = {
                 "side": live_side,
@@ -389,14 +422,30 @@ class LivePaperRunner:
                 or pos["hold_steps"] >= int(getattr(cfg, "max_holding_steps", 240))
             )
             exit_side = OrderSide.BUY
-        else:
-            gross = (market_prob - float(pos.get("entry_price", market_prob))) if pos["side"] == "LONG_YES" else (float(pos.get("entry_price", market_prob)) - market_prob)
+            exit_asset_id = None
+            exit_tick = tick
+        elif pos["side"] == "SHORT_YES":
+            # SHORT_YES = LONG NO token；用真实 NO 价格计算 P&L
+            cur_no_price = self._no_price(event_id, 1.0 - market_prob)
+            gross = cur_no_price - float(pos.get("entry_price", cur_no_price))
             should_exit = (
                 (z is not None and math.isfinite(float(z)) and abs(float(z)) <= self.engine.strategy.cfg.exit_z)
                 or pos["hold_steps"] >= self.engine.strategy.cfg.max_holding_steps
                 or gross <= self.engine.strategy.cfg.stop_loss
             )
-            exit_side = OrderSide.SELL if pos["side"] == "LONG_YES" else OrderSide.BUY
+            exit_side = OrderSide.SELL
+            exit_asset_id = self.event_no_asset_id.get(event_id)
+            exit_tick = self.event_no_latest_tick.get(event_id, tick)
+        else:
+            gross = market_prob - float(pos.get("entry_price", market_prob))
+            should_exit = (
+                (z is not None and math.isfinite(float(z)) and abs(float(z)) <= self.engine.strategy.cfg.exit_z)
+                or pos["hold_steps"] >= self.engine.strategy.cfg.max_holding_steps
+                or gross <= self.engine.strategy.cfg.stop_loss
+            )
+            exit_side = OrderSide.SELL
+            exit_asset_id = None
+            exit_tick = tick
 
         if not should_exit:
             return
@@ -405,9 +454,10 @@ class LivePaperRunner:
             event_id=event_id,
             side=exit_side,
             qty=float(self.engine.cfg.base_trade_qty),
-            limit_price=self._limit_price_from_tick(tick, side=exit_side, action="exit", fallback=market_prob),
+            limit_price=self._limit_price_from_tick(exit_tick, side=exit_side, action="exit", fallback=market_prob),
             action="exit",
             ts=cur.get("ts") or row.get("ts"),
+            asset_id=exit_asset_id,
         )
         self.live_positions.pop(event_id, None)
 

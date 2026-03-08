@@ -230,6 +230,7 @@ def main() -> None:
         asset_ids: list[str] = []
         asset_to_market_id: dict[str, str] = {}
         condition_to_market_id: dict[str, str] = {}
+        market_yes_no: dict[str, tuple[str, str]] = {}
 
         print(f"[startup] fetching market data for {len(market_ids)} markets: {market_ids[:5]}{'...' if len(market_ids)>5 else ''}", flush=True)
         for mid in market_ids:
@@ -245,6 +246,11 @@ def main() -> None:
                 asset_ids.append(t)
                 asset_to_market_id[t] = str(mid)
 
+            # clobTokenIds[0]=YES, clobTokenIds[1]=NO（Polymarket 约定）
+            if len(tokens) >= 2:
+                market_yes_no[str(mid)] = (tokens[0], tokens[1])
+                print(f"[startup] market={mid} yes={tokens[0][:16]}... no={tokens[1][:16]}...", flush=True)
+
             cond = m.get("conditionId")
             if cond:
                 condition_to_market_id[str(cond).lower()] = str(mid)
@@ -252,7 +258,12 @@ def main() -> None:
         if not asset_ids:
             raise ValueError("No clobTokenIds found for selected market ids")
 
-        print(f"[startup] resolved {len(asset_ids)} asset_ids from {len(market_ids)} markets", flush=True)
+        print(f"[startup] resolved {len(asset_ids)} asset_ids, {len(market_yes_no)} yes/no pairs from {len(market_ids)} markets", flush=True)
+
+        # 把 YES/NO token 映射注入 runner（runner 在 WS section 之前创建，此处补充）
+        runner.event_yes_asset_id.update({k: v[0] for k, v in market_yes_no.items()})
+        runner.event_no_asset_id.update({k: v[1] for k, v in market_yes_no.items()})
+
         ws_url = args.ws_url or "wss://ws-subscriptions-clob.polymarket.com/ws/market"
         subscribe_message = json.loads(args.subscribe_json) if args.subscribe_json else None
         ws_streamer = PolymarketWSStreamer(
