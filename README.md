@@ -132,7 +132,9 @@ Live paper 会输出：
 
 可选参数：
 - `--weather-cache-ttl`：天气数据缓存秒数（默认300），降低 Open-Meteo 请求频率
-- `--strategy-config`：策略参数 JSON（映射 `StrategyConfig`）
+- `--strategy-kind`：策略类型（`weather` / `premarket-no`）
+- `--strategy-config`：天气策略参数 JSON（映射 `StrategyConfig`）
+- `--premarket-strategy-config`：Premarket No 策略参数 JSON（映射 `PremarketNoConfig`）
 - `--risk-config`：风控参数 JSON（映射 `RiskConfig`）
 - `--execution-config`：执行参数 JSON（映射 `ExecutionConfig`）
 - `--engine-config`：引擎参数 JSON（映射 `EngineConfig`）

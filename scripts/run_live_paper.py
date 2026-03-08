@@ -20,6 +20,7 @@ from weather_arb.polymarket_sdk_executor import PolymarketSdkExecutor
 from weather_arb.realtime import PollingMarketStreamer, PolymarketWSStreamer, RealtimeConfig, WebSocketMarketStreamer
 from weather_arb.risk import RiskConfig
 from weather_arb.strategy import StrategyConfig
+from weather_arb.strategy_premarket_no import PremarketNoConfig, PremarketNoLadderStrategy
 from weather_arb.weather_provider import OpenMeteoConfig, OpenMeteoMultiModelProvider, WeatherEventConfig
 
 
@@ -70,7 +71,9 @@ def main() -> None:
     parser.add_argument("--weather-config", default="", help="JSON file: {market_id: {latitude, longitude, variable, threshold, direction, horizon_hours}}")
     parser.add_argument("--weather-cache-ttl", type=int, default=300, help="Weather forecast cache ttl seconds")
     parser.add_argument("--ws-provider", choices=["generic", "polymarket"], default="polymarket")
+    parser.add_argument("--strategy-kind", choices=["weather", "premarket-no"], default="weather")
     parser.add_argument("--strategy-config", default="", help="JSON file for StrategyConfig overrides")
+    parser.add_argument("--premarket-strategy-config", default="", help="JSON file for PremarketNoConfig overrides")
     parser.add_argument("--risk-config", default="", help="JSON file for RiskConfig overrides")
     parser.add_argument("--execution-config", default="", help="JSON file for ExecutionConfig overrides")
     parser.add_argument("--engine-config", default="", help="JSON file for EngineConfig overrides")
@@ -83,15 +86,21 @@ def main() -> None:
     args = parser.parse_args()
 
     strategy_cfg = _load_dataclass_config(args.strategy_config or None, StrategyConfig)
+    premarket_strategy_cfg = _load_dataclass_config(args.premarket_strategy_config or None, PremarketNoConfig)
     risk_cfg = _load_dataclass_config(args.risk_config or None, RiskConfig)
     execution_cfg = _load_dataclass_config(args.execution_config or None, ExecutionConfig)
     engine_cfg = _load_dataclass_config(args.engine_config or None, EngineConfig)
+
+    strategy_impl = None
+    if args.strategy_kind == "premarket-no":
+        strategy_impl = PremarketNoLadderStrategy(premarket_strategy_cfg or PremarketNoConfig())
 
     engine = PaperArbEngine(
         strategy_cfg=strategy_cfg,
         risk_cfg=risk_cfg,
         execution_cfg=execution_cfg,
         engine_cfg=engine_cfg,
+        strategy=strategy_impl,
     )
 
     forecast_provider = StaticForecastProvider(args.static_prob)
@@ -134,7 +143,9 @@ def main() -> None:
         "weather_cache_ttl": args.weather_cache_ttl,
         "ws_provider": args.ws_provider,
         "ws_raw_log": args.ws_raw_log,
+        "strategy_kind": args.strategy_kind,
         "strategy_config": args.strategy_config,
+        "premarket_strategy_config": args.premarket_strategy_config,
         "risk_config": args.risk_config,
         "execution_config": args.execution_config,
         "engine_config": args.engine_config,

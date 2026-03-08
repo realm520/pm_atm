@@ -8,6 +8,7 @@ import pandas as pd
 from .execution import ExecutionConfig, OrderBookLevel, SlippageModel
 from .risk import RiskConfig, RiskManager
 from .strategy import StrategyConfig, WeatherMispricingStrategy
+from .strategy_base import Strategy
 
 
 @dataclass(frozen=True)
@@ -28,8 +29,9 @@ class PaperArbEngine:
         risk_cfg: RiskConfig | None = None,
         execution_cfg: ExecutionConfig | None = None,
         engine_cfg: EngineConfig | None = None,
+        strategy: Strategy | None = None,
     ) -> None:
-        self.strategy = WeatherMispricingStrategy(strategy_cfg or StrategyConfig())
+        self.strategy = strategy or WeatherMispricingStrategy(strategy_cfg or StrategyConfig())
         self.risk = RiskManager(risk_cfg or RiskConfig())
         self.exec_model = SlippageModel(execution_cfg or ExecutionConfig())
         self.cfg = engine_cfg or EngineConfig()

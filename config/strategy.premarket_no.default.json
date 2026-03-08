@@ -1,0 +1,7 @@
+{
+  "min_no_price": 0.7,
+  "max_no_price": 0.93,
+  "take_profit_no_price": 0.95,
+  "max_holding_steps": 240,
+  "fee_bps": 8.0
+}
