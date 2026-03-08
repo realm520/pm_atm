@@ -6,33 +6,28 @@ import json
 import os
 import time
 
-import requests
-
-from weather_arb.polymarket import PolymarketClient
 from weather_arb.polymarket_account import PolymarketAccountManager
 from weather_arb.polymarket_direct_trader import DirectOrderRequest, PolymarketDirectTrader
 
-CLOB_HOST = "https://clob.polymarket.com"
-
 
 def fetch_any_token_id() -> str:
-    """从 Polymarket 自动获取一个可用的 token id（用于 smoke test）。"""
-    client = PolymarketClient()
-    markets = client.list_markets(active=True, limit=20)
-    print(f"[smoke] fetched {len(markets)} markets from gamma-api")
-    checked = 0
+    """从 CLOB 直接获取一个接受挂单的 token id（用于 smoke test）。"""
+    from py_clob_client.client import ClobClient
+
+    # 使用只读模式，dummy key 仅用于实例化，get_sampling_simplified_markets 不需要签名
+    client = ClobClient(host="https://clob.polymarket.com", chain_id=137, key="0x" + "0" * 64)
+    resp = client.get_sampling_simplified_markets()
+    markets = resp.get("data", [])
+    print(f"[smoke] fetched {len(markets)} markets from CLOB")
     for market in markets:
-        for tid in PolymarketClient.parse_clob_token_ids(market):
-            checked += 1
-            try:
-                r = requests.get(f"{CLOB_HOST}/tick-size?token_id={tid}", timeout=5)
-                if r.status_code == 200:
-                    print(f"[smoke] auto token_id={tid} (checked {checked} tokens)")
-                    return tid
-                print(f"[smoke]   tick-size {r.status_code} for tid={tid[:24]}")
-            except requests.RequestException as e:
-                print(f"[smoke]   request error for tid={tid[:24]}: {e}")
-    raise RuntimeError(f"no valid token found after checking {checked} token ids; set --token-id manually")
+        if not market.get("accepting_orders"):
+            continue
+        for token in market.get("tokens", []):
+            tid = token.get("token_id", "")
+            if tid:
+                print(f"[smoke] auto token_id={tid}")
+                return tid
+    raise RuntimeError("no accepting_orders token found; set --token-id manually")
 
 
 def main() -> None:
