@@ -11,7 +11,7 @@ from weather_arb.engine import EngineConfig, PaperArbEngine
 from weather_arb.execution import ExecutionConfig
 from weather_arb.execution_service import ExecutionService
 from weather_arb.exchange_sim import SimExchangeExecutor
-from weather_arb.live import LivePaperRunner, LiveRunnerConfig, StaticForecastProvider, run_async
+from weather_arb.live import LivePaperRunner, LiveRunnerConfig, run_async
 from weather_arb.order_store import SqliteOrderStore
 from weather_arb.polymarket import PolymarketClient
 from weather_arb.polymarket_account import PolymarketAccountManager
@@ -67,8 +67,7 @@ def main() -> None:
     parser.add_argument("--telegram-thread-id", type=int, default=0, help="Optional Telegram topic(thread) id for alerts")
     parser.add_argument("--ws-raw-log", default="logs/live_ws_raw.jsonl", help="Raw WS messages for diagnostics")
     parser.add_argument("--max-seconds", type=float, default=0, help="Auto-stop after N seconds (0 = run forever)")
-    parser.add_argument("--static-prob", type=float, default=0.55, help="Fallback model probability")
-    parser.add_argument("--weather-config", default="", help="JSON file: {market_id: {latitude, longitude, variable, threshold, direction, horizon_hours}}")
+    parser.add_argument("--weather-config", required=True, help="JSON file: {market_id: {latitude, longitude, variable, threshold, direction, horizon_hours}}")
     parser.add_argument("--weather-cache-ttl", type=int, default=300, help="Weather forecast cache ttl seconds")
     parser.add_argument("--ws-provider", choices=["generic", "polymarket"], default="polymarket")
     parser.add_argument("--strategy-kind", choices=["weather", "premarket-no"], default="weather")
@@ -103,18 +102,15 @@ def main() -> None:
         strategy=strategy_impl,
     )
 
-    forecast_provider = StaticForecastProvider(args.static_prob)
-    if args.weather_config:
-        with open(args.weather_config, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        event_map = {
-            str(k): WeatherEventConfig(**v)
-            for k, v in raw.items()
-        }
-        forecast_provider = OpenMeteoMultiModelProvider(
-            event_map=event_map,
-            config=OpenMeteoConfig(cache_ttl_sec=args.weather_cache_ttl),
-        )
+    raw = _load_json(args.weather_config)
+    event_map = {
+        str(k): WeatherEventConfig(**v)
+        for k, v in raw.items()
+    }
+    forecast_provider = OpenMeteoMultiModelProvider(
+        event_map=event_map,
+        config=OpenMeteoConfig(cache_ttl_sec=args.weather_cache_ttl),
+    )
 
     for p in [args.out_csv, args.summary_csv, args.events_jsonl, args.error_log, args.run_meta, args.alerts_jsonl, args.ws_raw_log]:
         Path(p).parent.mkdir(parents=True, exist_ok=True)
@@ -217,11 +213,7 @@ def main() -> None:
 
     market_ids = [m.strip() for m in args.market_ids.split(",") if m.strip()]
     if args.all_from_weather_config:
-        if not args.weather_config:
-            raise ValueError("--all-from-weather-config requires --weather-config")
-        with open(args.weather_config, "r", encoding="utf-8") as f:
-            _raw_cfg = json.load(f)
-        market_ids = sorted(str(k) for k in _raw_cfg.keys())
+        market_ids = sorted(event_map.keys())
 
     if args.ws_provider == "polymarket":
         if not market_ids:
