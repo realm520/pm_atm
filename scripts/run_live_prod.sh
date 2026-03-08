@@ -26,6 +26,9 @@ Optional environment variables:
   TG_CHAT_ID           Default: -1003837508045
   TG_THREAD_ID         Default: 52
   LIVE_MAX_SECONDS     Default: 21600
+  MIN_USDC             Default: 1
+  REQUIRE_ALLOWANCE    Default: 1 (1=must have allowance)
+  AUTO_APPROVE_ALLOWANCE Default: 0 (1=try update allowance)
   SMOKE_TOKEN_ID       Token id for smoke order command
 EOF
 }
@@ -68,10 +71,20 @@ is_running() {
 
 preflight_live() {
   check_env
+  local extra=()
+  if [[ "${REQUIRE_ALLOWANCE:-1}" == "1" ]]; then
+    extra+=(--require-allowance)
+  fi
+  if [[ "${AUTO_APPROVE_ALLOWANCE:-0}" == "1" ]]; then
+    extra+=(--auto-approve-allowance)
+  fi
+
   uv run python scripts/preflight_live.py \
     --account-name "${POLY_ACCOUNT_NAME}" \
     --vault "${POLY_ACCOUNT_VAULT:-state/polymarket_accounts.json}" \
-    --require-unblocked
+    --min-usdc "${MIN_USDC:-1}" \
+    --require-unblocked \
+    "${extra[@]}"
 }
 
 smoke_live() {
