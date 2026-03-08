@@ -46,6 +46,10 @@ def main() -> None:
     p_set_funder.add_argument("--signature-type", type=int, default=None)
     p_set_funder.add_argument("--vault", default="state/polymarket_accounts.json")
 
+    p_open_orders = sub.add_parser("open-orders", help="List open orders for account")
+    p_open_orders.add_argument("--name", required=True)
+    p_open_orders.add_argument("--vault", default="state/polymarket_accounts.json")
+
     p_deposit = sub.add_parser("show-deposit-addresses", help="Fetch bridge deposit addresses for account funder")
     p_deposit.add_argument("--name", required=True)
     p_deposit.add_argument("--vault", default="state/polymarket_accounts.json")
@@ -145,6 +149,11 @@ def main() -> None:
 
     if args.cmd == "cancel-order":
         res = trader.cancel_order(account=account, private_key=private_key, order_id=args.order_id)
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return
+
+    if args.cmd == "open-orders":
+        res = trader.get_open_orders(account=account, private_key=private_key)
         print(json.dumps(res, ensure_ascii=False, indent=2))
         return
 
