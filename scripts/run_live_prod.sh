@@ -93,14 +93,25 @@ smoke_live() {
     echo "[smoke] SMOKE_TOKEN_ID not set, fetching a token from Polymarket..."
     SMOKE_TOKEN_ID=$(uv run python - <<'PYEOF'
 import sys
+import json
+import requests
+CLOB_HOST = "https://clob.polymarket.com"
 try:
     from weather_arb.polymarket import PolymarketClient
     client = PolymarketClient()
-    for market in client.list_markets(active=True, limit=10):
-        tids = client.market_token_ids(market.get("id",""))
-        if tids:
-            print(tids[0])
-            sys.exit(0)
+    for market in client.list_markets(active=True, limit=20):
+        raw = market.get("clobTokenIds")
+        if isinstance(raw, str) and raw:
+            raw = json.loads(raw)
+        tids = [str(x) for x in raw] if isinstance(raw, list) else []
+        for tid in tids:
+            try:
+                r = requests.get(f"{CLOB_HOST}/tick-size?token_id={tid}", timeout=5)
+                if r.status_code == 200:
+                    print(tid)
+                    sys.exit(0)
+            except requests.RequestException:
+                continue
 except Exception as e:
     print(f"[smoke] error: {e}", file=sys.stderr)
 sys.exit(1)
