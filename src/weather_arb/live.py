@@ -92,7 +92,6 @@ class LivePaperRunner:
         self.rows: list[dict[str, Any]] = []
         self.seen_trade_keys: set[str] = set()
         self.event_latest_asset_id: dict[str, str] = {}
-        self.event_yes_asset_id: dict[str, str] = {k: v[0] for k, v in (market_yes_no or {}).items()}
         self.event_no_asset_id: dict[str, str] = {k: v[1] for k, v in (market_yes_no or {}).items()}
         self.event_no_latest_tick: dict[str, dict] = {}
         self.live_positions: dict[str, dict[str, Any]] = {}
@@ -293,7 +292,7 @@ class LivePaperRunner:
     def _no_price(self, event_id: str, fallback: float) -> float:
         """从 NO token 最新 tick 获取真实 NO 价格，如无数据则回退到 1-YES_price。"""
         t = self.event_no_latest_tick.get(event_id, {})
-        v = t.get("lastTradePrice") or t.get("last_trade_price") or t.get("price")
+        v = t.get("lastTradePrice") or t.get("last_trade_price") or t.get("outcomePrice") or t.get("price")
         return float(v) if v is not None else fallback
 
     def _submit_execution_intent(self, *, event_id: str, side: OrderSide, qty: float, limit_price: float, action: str, ts: Any, asset_id: str | None = None) -> None:

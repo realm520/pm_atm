@@ -260,8 +260,7 @@ def main() -> None:
 
         print(f"[startup] resolved {len(asset_ids)} asset_ids, {len(market_yes_no)} yes/no pairs from {len(market_ids)} markets", flush=True)
 
-        # 把 YES/NO token 映射注入 runner（runner 在 WS section 之前创建，此处补充）
-        runner.event_yes_asset_id.update({k: v[0] for k, v in market_yes_no.items()})
+        # 把 NO token 映射注入 runner（runner 在 WS section 之前创建，此处补充）
         runner.event_no_asset_id.update({k: v[1] for k, v in market_yes_no.items()})
 
         ws_url = args.ws_url or "wss://ws-subscriptions-clob.polymarket.com/ws/market"
