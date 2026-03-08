@@ -90,8 +90,27 @@ preflight_live() {
 smoke_live() {
   check_env
   if [[ -z "${SMOKE_TOKEN_ID:-}" ]]; then
-    echo "[smoke] missing env: SMOKE_TOKEN_ID"
-    exit 1
+    echo "[smoke] SMOKE_TOKEN_ID not set, fetching a token from Polymarket..."
+    SMOKE_TOKEN_ID=$(uv run python - <<'PYEOF'
+import sys
+try:
+    from weather_arb.polymarket import PolymarketClient
+    client = PolymarketClient()
+    for market in client.list_markets(active=True, limit=10):
+        tids = client.market_token_ids(market.get("id",""))
+        if tids:
+            print(tids[0])
+            sys.exit(0)
+except Exception as e:
+    print(f"[smoke] error: {e}", file=sys.stderr)
+sys.exit(1)
+PYEOF
+)
+    if [[ -z "${SMOKE_TOKEN_ID:-}" ]]; then
+      echo "[smoke] failed to auto-fetch token id"
+      exit 1
+    fi
+    echo "[smoke] auto token_id=${SMOKE_TOKEN_ID}"
   fi
   uv run python scripts/smoke_real_order.py \
     --account-name "${POLY_ACCOUNT_NAME}" \
