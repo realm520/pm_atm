@@ -36,7 +36,7 @@ def main() -> None:
     p.add_argument("--vault", default="state/polymarket_accounts.json")
     p.add_argument("--token-id", default=None, help="Token id; auto-fetched from Polymarket if omitted")
     p.add_argument("--price", type=float, default=0.01)
-    p.add_argument("--size", type=float, default=1.0)
+    p.add_argument("--size", type=float, default=5.0)
     p.add_argument("--side", choices=["BUY", "SELL"], default="BUY")
     p.add_argument("--sleep-sec", type=float, default=1.5)
     args = p.parse_args()
