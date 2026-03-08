@@ -135,6 +135,8 @@ Live paper 会输出：
 - `--strategy-kind`：策略类型（`weather` / `premarket-no`）
 - `--strategy-config`：天气策略参数 JSON（映射 `StrategyConfig`）
 - `--premarket-strategy-config`：Premarket No 策略参数 JSON（映射 `PremarketNoConfig`）
+  - 支持仓位约束：单市场权重、同事件权重、目标活跃持仓上限
+  - 支持提前止盈：`take_profit_no_price`（默认 0.95）
 - `--risk-config`：风控参数 JSON（映射 `RiskConfig`）
 - `--execution-config`：执行参数 JSON（映射 `ExecutionConfig`）
 - `--engine-config`：引擎参数 JSON（映射 `EngineConfig`）

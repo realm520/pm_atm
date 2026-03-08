@@ -3,5 +3,9 @@
   "max_no_price": 0.93,
   "take_profit_no_price": 0.95,
   "max_holding_steps": 240,
-  "fee_bps": 8.0
+  "fee_bps": 8.0,
+  "max_single_market_weight": 0.1,
+  "max_event_weight": 0.3,
+  "target_min_active_positions": 5,
+  "target_max_active_positions": 10
 }
