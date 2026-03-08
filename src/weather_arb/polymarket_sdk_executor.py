@@ -58,6 +58,23 @@ class PolymarketSdkExecutor(ExchangeExecutionPort):
             return obj.get(key, default)
         return getattr(obj, key, default)
 
+    @staticmethod
+    def _fmt_intent(intent: ExecutionIntent) -> str:
+        return f"side={intent.side.value} asset={intent.asset_id} qty={intent.qty} price={intent.limit_price}"
+
+    def _extract_tx_hashes(self, resp: Any) -> list[str]:
+        _TX_KEYS = ("transactionHash", "transaction_hash", "txHash")
+        matchings = self._get(resp, "matchings") or self._get(resp, "transactions") or []
+        hashes = [
+            str(tx)
+            for m in (matchings if isinstance(matchings, list) else [])
+            if (tx := next((self._get(m, k) for k in _TX_KEYS if self._get(m, k)), None))
+        ]
+        top_tx = next((self._get(resp, k) for k in _TX_KEYS if self._get(resp, k)), None)
+        if top_tx:
+            hashes = [str(top_tx)] + hashes
+        return hashes
+
     def place_order(self, intent: ExecutionIntent) -> tuple[str, OrderStatus, str]:
         from py_clob_client.clob_types import OrderArgs
 
@@ -67,8 +84,10 @@ class PolymarketSdkExecutor(ExchangeExecutionPort):
             resp = self.client.post_order(signed, self.cfg.order_type)
             oid = str(self._get(resp, "orderID", "") or self._get(resp, "id", ""))
             st = self._status(self._get(resp, "status", "NEW"))
+            print(f"[executor] place_order submitted: order_id={oid} {self._fmt_intent(intent)} status={st}", flush=True)
             return oid, st, ""
         except Exception as exc:
+            print(f"[executor] place_order FAILED: {self._fmt_intent(intent)} err={exc}", flush=True)
             return "", OrderStatus.REJECTED, str(exc)
 
     def cancel_order(self, exchange_order_id: str) -> bool:
@@ -88,4 +107,14 @@ class PolymarketSdkExecutor(ExchangeExecutionPort):
         filled = float(self._get(resp, "size_matched", 0.0) or self._get(resp, "filled_size", 0.0) or 0.0)
         avg = self._get(resp, "avg_price", None)
         avg_fill = float(avg) if avg is not None else None
+
+        if status in {OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED}:
+            tx_hashes = self._extract_tx_hashes(resp)
+            tx_str = ", ".join(tx_hashes) if tx_hashes else f"N/A raw={resp}"
+            print(
+                f"[executor] FILL detected: order_id={exchange_order_id} status={status} "
+                f"filled={filled} avg_price={avg_fill} tx_hash={tx_str}",
+                flush=True,
+            )
+
         return status, filled, avg_fill, [], ""
