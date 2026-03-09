@@ -104,6 +104,9 @@ class ExecutionService:
             self._consecutive_rejected = 0
         return order
 
+    def get_order_by_client_id(self, client_order_id: str) -> OrderRecord | None:
+        return self.store.get_by_client_order_id(client_order_id)
+
     def refresh_recent(self, limit: int = 200) -> list[OrderRecord]:
         out: list[OrderRecord] = []
         for o in self.store.recent_orders(limit=limit):

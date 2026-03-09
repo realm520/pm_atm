@@ -22,6 +22,7 @@ class ExecutionHealthProvider(Protocol):
     def submit(self, intent: ExecutionIntent) -> Any: ...
     def refresh_recent(self, limit: int = 200) -> list[Any]: ...
     def risk_flags(self, minutes: int = 5) -> dict[str, bool | float | int]: ...
+    def get_order_by_client_id(self, client_order_id: str) -> Any: ...
 
 
 class CircuitBreakerTriggered(RuntimeError):
@@ -295,18 +296,19 @@ class LivePaperRunner:
         v = t.get("lastTradePrice") or t.get("last_trade_price") or t.get("outcomePrice") or t.get("price")
         return float(v) if v is not None else fallback
 
-    def _submit_execution_intent(self, *, event_id: str, side: OrderSide, qty: float, limit_price: float, action: str, ts: Any, asset_id: str | None = None) -> None:
+    def _submit_execution_intent(self, *, event_id: str, side: OrderSide, qty: float, limit_price: float, action: str, ts: Any, asset_id: str | None = None) -> str | None:
+        """Submit an execution intent. Returns client_order_id on success, None if skipped."""
         if self.execution_service is None:
-            return
+            return None
         if asset_id is None:
             asset_id = self.event_latest_asset_id.get(event_id)
         if not asset_id:
             self._append_alert("warning", "execution_skip_no_asset", f"skip {action} {event_id}: missing asset_id mapping")
-            return
+            return None
 
         key = f"{action}|{event_id}|{ts}|{side.value}"
         if key in self.execution_submitted_keys:
-            return
+            return None
 
         intent = ExecutionIntent(
             event_id=event_id,
@@ -331,6 +333,7 @@ class LivePaperRunner:
                 "client_order_id": intent.client_order_id,
             },
         )
+        return intent.client_order_id
 
     def _process_execution_signals(self, df: pd.DataFrame, row: dict[str, Any], tick: dict[str, Any]) -> None:
         if self.execution_service is None or df.empty:
@@ -372,6 +375,8 @@ class LivePaperRunner:
                 side = OrderSide.SELL
                 live_side = "LONG_NO"
                 entry_ref_price = no_price
+                entry_asset_id = None
+                entry_tick = tick
             else:
                 if signal > 0:
                     side = OrderSide.BUY
@@ -395,7 +400,7 @@ class LivePaperRunner:
                     entry_asset_id = no_asset_id
                     entry_tick = no_tick
 
-            self._submit_execution_intent(
+            entry_client_order_id = self._submit_execution_intent(
                 event_id=event_id,
                 side=side,
                 qty=float(self.engine.cfg.base_trade_qty),
@@ -409,6 +414,7 @@ class LivePaperRunner:
                 "entry_price": entry_ref_price,
                 "hold_steps": 0,
                 "entry_ts": cur.get("ts") or row.get("ts"),
+                "entry_client_order_id": entry_client_order_id,
             }
             return
 
@@ -448,6 +454,29 @@ class LivePaperRunner:
 
         if not should_exit:
             return
+
+        # 出场前检查入场订单是否真正成交，避免因入场未成交导致 SELL "not enough balance"
+        entry_coid = pos.get("entry_client_order_id")
+        if entry_coid and self.execution_service is not None:
+            entry_order = self.execution_service.get_order_by_client_id(entry_coid)
+            if entry_order is not None:
+                from .orders import OrderStatus
+                entry_status = getattr(entry_order, "status", None)
+                if entry_status in {OrderStatus.FAILED, OrderStatus.REJECTED, OrderStatus.CANCELED}:
+                    self._append_event(
+                        "execution_skip",
+                        {
+                            "reason": "entry_not_filled",
+                            "event_id": event_id,
+                            "entry_client_order_id": entry_coid,
+                            "entry_status": str(entry_status),
+                        },
+                    )
+                    self._safe_print(
+                        f"[live][warning] skip exit {event_id}: entry order {entry_coid} status={entry_status}, no tokens to sell"
+                    )
+                    self.live_positions.pop(event_id, None)
+                    return
 
         self._submit_execution_intent(
             event_id=event_id,

@@ -31,6 +31,9 @@ class DummyExecutionService:
             "consecutive_rejected": 0,
         }
 
+    def get_order_by_client_id(self, client_order_id: str):
+        return None
+
 
 def test_live_runner_normalize_and_dump(tmp_path: Path) -> None:
     out_file = tmp_path / "live_trades.csv"
