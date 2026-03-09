@@ -50,6 +50,15 @@ def main() -> None:
     p_open_orders.add_argument("--name", required=True)
     p_open_orders.add_argument("--vault", default="state/polymarket_accounts.json")
 
+    p_trades = sub.add_parser("trades", help="List trade history for account")
+    p_trades.add_argument("--name", required=True)
+    p_trades.add_argument("--vault", default="state/polymarket_accounts.json")
+
+    p_positions = sub.add_parser("positions", help="Show positions and P&L (aggregated from trade history)")
+    p_positions.add_argument("--name", required=True)
+    p_positions.add_argument("--vault", default="state/polymarket_accounts.json")
+    p_positions.add_argument("--open-only", action="store_true", help="只显示净持仓 > 0 的标的")
+
     p_deposit = sub.add_parser("show-deposit-addresses", help="Fetch bridge deposit addresses for account funder")
     p_deposit.add_argument("--name", required=True)
     p_deposit.add_argument("--vault", default="state/polymarket_accounts.json")
@@ -155,6 +164,42 @@ def main() -> None:
     if args.cmd == "open-orders":
         res = trader.get_open_orders(account=account, private_key=private_key)
         print(json.dumps(res, ensure_ascii=False, indent=2))
+        return
+
+    if args.cmd == "trades":
+        res = trader.get_trades(account=account, private_key=private_key)
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return
+
+    if args.cmd == "positions":
+        positions = trader.get_positions_pnl(
+            account=account, private_key=private_key, open_only=args.open_only
+        )
+        out = [
+            {
+                "token_id": p.token_id,
+                "market": p.market,
+                "net_qty": round(p.net_qty, 4),
+                "avg_cost": round(p.avg_cost, 4),
+                "current_price": round(p.current_price, 4),
+                "unrealized_pnl": round(p.unrealized_pnl, 4),
+                "realized_pnl": round(p.realized_pnl, 4),
+                "total_bought": round(p.total_bought, 4),
+                "total_sold": round(p.total_sold, 4),
+            }
+            for p in positions
+        ]
+        total_unrealized = sum(p.unrealized_pnl for p in positions)
+        total_realized = sum(p.realized_pnl for p in positions)
+        result = {
+            "positions": out,
+            "summary": {
+                "total_unrealized_pnl": round(total_unrealized, 4),
+                "total_realized_pnl": round(total_realized, 4),
+                "total_pnl": round(total_unrealized + total_realized, 4),
+            },
+        }
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return
 
 
