@@ -22,6 +22,7 @@ class ExecutionServiceConfig:
     max_reject_rate_crit: float = 0.08
     max_reject_rate_stop: float = 0.12
     max_consecutive_rejected_stop: int = 5
+    min_order_notional: float = 1.0  # Polymarket min size $1
 
 
 class ExecutionService:
@@ -46,6 +47,14 @@ class ExecutionService:
         # idempotent
         if order.status != OrderStatus.PENDING_SUBMIT:
             return order
+
+        # Use SDK-rounded price (2 decimal places = 1-cent tick) to match actual submitted notional
+        effective_price = round(intent.limit_price, 2)
+        notional = round(intent.qty * effective_price, 4)
+        if notional < self.cfg.min_order_notional:
+            reject_reason = f"notional ${notional:.4f} below min ${self.cfg.min_order_notional}"
+            # Local validation failure — does not count as exchange reject
+            return self.store.transition_order(order.order_id, OrderStatus.REJECTED, reject_reason=reject_reason)
 
         try:
             exchange_order_id, status, reject_reason = self.exchange.place_order(intent)

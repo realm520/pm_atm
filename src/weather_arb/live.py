@@ -311,9 +311,12 @@ class LivePaperRunner:
 
         clamped_price = self._clamp_price(float(limit_price))
         clamped_qty = float(max(0.001, qty))
+        # Polymarket SDK rounds price to 2 decimal places (1-cent tick);
+        # use rounded price for notional check to avoid false-pass (e.g. 0.013→0.01).
+        effective_price = round(clamped_price, 2)
         # min_notional bump 只适用于入场：退出必须按实际持仓量下单，不能超卖
-        if action == "entry" and clamped_price * clamped_qty < self._MIN_ORDER_NOTIONAL:
-            bumped_qty = math.ceil(self._MIN_ORDER_NOTIONAL / clamped_price)
+        if action == "entry" and effective_price * clamped_qty < self._MIN_ORDER_NOTIONAL:
+            bumped_qty = math.ceil(self._MIN_ORDER_NOTIONAL / effective_price)
             size_key = "bestAskSize" if side == OrderSide.BUY else "bestBidSize"
             raw_size = tick.get(size_key) if tick else None
             available_size = float(raw_size) if raw_size is not None else None
