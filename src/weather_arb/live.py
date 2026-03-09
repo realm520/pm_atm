@@ -70,6 +70,8 @@ class LiveRunnerConfig:
 class LivePaperRunner:
     """Consumes realtime ticks and repeatedly evaluates paper engine."""
 
+    _MIN_ORDER_NOTIONAL: float = 1.0  # Polymarket minimum order value in USD
+
     @staticmethod
     def _safe_print(message: str) -> None:
         try:
@@ -296,7 +298,7 @@ class LivePaperRunner:
         v = t.get("lastTradePrice") or t.get("last_trade_price") or t.get("outcomePrice") or t.get("price")
         return float(v) if v is not None else fallback
 
-    def _submit_execution_intent(self, *, event_id: str, side: OrderSide, qty: float, limit_price: float, action: str, ts: Any, asset_id: str | None = None) -> str | None:
+    def _submit_execution_intent(self, *, event_id: str, side: OrderSide, qty: float, limit_price: float, action: str, ts: Any, asset_id: str | None = None, tick: dict[str, Any] | None = None) -> str | None:
         """Submit an execution intent. Returns client_order_id on success, None if skipped."""
         if self.execution_service is None:
             return None
@@ -310,12 +312,32 @@ class LivePaperRunner:
         if key in self.execution_submitted_keys:
             return None
 
+        clamped_price = self._clamp_price(float(limit_price))
+        clamped_qty = float(max(0.001, qty))
+        if clamped_price * clamped_qty < self._MIN_ORDER_NOTIONAL:
+            bumped_qty = math.ceil(self._MIN_ORDER_NOTIONAL / clamped_price)
+            size_key = "bestAskSize" if side == OrderSide.BUY else "bestBidSize"
+            raw_size = tick.get(size_key) if tick else None
+            available_size = float(raw_size) if raw_size is not None else None
+            if available_size is not None and available_size < bumped_qty:
+                self._append_alert(
+                    "warning",
+                    "execution_skip_insufficient_depth",
+                    f"skip {action} {event_id}: need qty={bumped_qty} but {size_key}={available_size} (price={clamped_price})",
+                )
+                return None
+            clamped_qty = float(bumped_qty)
+            self._append_event(
+                "execution_qty_bumped",
+                {"action": action, "event_id": event_id, "original_qty": qty, "bumped_qty": clamped_qty, "price": clamped_price},
+            )
+
         intent = ExecutionIntent(
             event_id=event_id,
             asset_id=asset_id,
             side=side,
-            qty=float(max(0.001, qty)),
-            limit_price=self._clamp_price(float(limit_price)),
+            qty=clamped_qty,
+            limit_price=clamped_price,
             timeout_sec=15.0,
             client_order_id=f"live-{key}",
         )
@@ -408,6 +430,7 @@ class LivePaperRunner:
                 action="entry",
                 ts=cur.get("ts") or row.get("ts"),
                 asset_id=entry_asset_id,
+                tick=entry_tick,
             )
             self.live_positions[event_id] = {
                 "side": live_side,
@@ -487,6 +510,7 @@ class LivePaperRunner:
             action="exit",
             ts=cur.get("ts") or row.get("ts"),
             asset_id=exit_asset_id,
+            tick=exit_tick,
         )
         self.live_positions.pop(event_id, None)
 

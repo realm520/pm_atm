@@ -166,12 +166,16 @@ class PolymarketWSStreamer(WebSocketMarketStreamer):
             if price is None:
                 return out
 
+            best_ask_size = payload["asks"][0].get("size") if payload.get("asks") else None
+            best_bid_size = payload["bids"][0].get("size") if payload.get("bids") else None
             out.append(
                 {
                     "id": str(market_id),
                     "price": float(price),
                     "bestBid": payload.get("best_bid"),
                     "bestAsk": payload.get("best_ask"),
+                    "bestAskSize": float(best_ask_size) if best_ask_size is not None else None,
+                    "bestBidSize": float(best_bid_size) if best_bid_size is not None else None,
                     "timestamp": payload.get("timestamp"),
                     "asset_id": asset_id,
                     "event_type": event_type,
