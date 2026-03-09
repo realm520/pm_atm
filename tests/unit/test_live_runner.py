@@ -7,6 +7,7 @@ from weather_arb.engine import EngineConfig, PaperArbEngine
 import pytest
 
 from weather_arb.live import CircuitBreakerTriggered, LivePaperRunner, LiveRunnerConfig, StaticForecastProvider
+from weather_arb.orders import OrderRecord, OrderSide, OrderStatus
 from weather_arb.strategy_premarket_no import PremarketNoConfig, PremarketNoLadderStrategy
 
 
@@ -14,9 +15,24 @@ class DummyExecutionService:
     def __init__(self, hard_stop: bool = False) -> None:
         self.hard_stop = hard_stop
         self.submitted: list[dict] = []
+        self._orders: dict[str, OrderRecord] = {}
 
     def submit(self, intent):
         self.submitted.append({"event_id": intent.event_id, "asset_id": intent.asset_id, "side": intent.side.value})
+        # 模拟入场订单立即完全成交
+        record = OrderRecord(
+            order_id=intent.client_order_id,
+            client_order_id=intent.client_order_id,
+            event_id=intent.event_id,
+            asset_id=str(intent.asset_id or ""),
+            side=intent.side,
+            qty=intent.qty,
+            limit_price=intent.limit_price,
+            status=OrderStatus.FILLED,
+            filled_qty=intent.qty,
+            avg_fill_price=intent.limit_price,
+        )
+        self._orders[intent.client_order_id] = record
         return intent
 
     def refresh_recent(self, limit: int = 200):
@@ -31,8 +47,8 @@ class DummyExecutionService:
             "consecutive_rejected": 0,
         }
 
-    def get_order_by_client_id(self, client_order_id: str) -> None:
-        return None
+    def get_order_by_client_id(self, client_order_id: str) -> OrderRecord | None:
+        return self._orders.get(client_order_id)
 
 
 def test_live_runner_normalize_and_dump(tmp_path: Path) -> None:

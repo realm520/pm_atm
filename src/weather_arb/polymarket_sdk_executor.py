@@ -129,10 +129,12 @@ class PolymarketSdkExecutor(ExchangeExecutionPort):
             if size <= 0:
                 continue
             avg_price_raw = p.get("avgPrice")
+            cur_price_raw = p.get("curPrice")
             result.append({
                 "asset_id": aid,
                 "size": size,
                 "avg_price": float(avg_price_raw) if avg_price_raw is not None else None,
+                "cur_price": float(cur_price_raw) if cur_price_raw is not None else None,
             })
         return result
 

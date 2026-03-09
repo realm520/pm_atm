@@ -101,6 +101,7 @@ class LivePaperRunner:
         self.realized_pnl: float = 0.0
         self.n_completed_trades: int = 0
         self.event_latest_price: dict[str, float] = {}
+        self.event_midprice: dict[str, float] = {}  # (bestBid+bestAsk)/2，WS 每 tick 更新
         self.execution_submitted_keys: set[str] = set()
         self._csv_headers_written: set[str] = set()
         self.tick_count = 0
@@ -146,6 +147,14 @@ class LivePaperRunner:
         if asset_id:
             self.event_latest_asset_id[event_id_str] = str(asset_id)
         self.event_latest_price[event_id_str] = float(market_prob)
+
+        best_bid = tick.get("bestBid") if tick.get("bestBid") is not None else tick.get("best_bid")
+        best_ask = tick.get("bestAsk") if tick.get("bestAsk") is not None else tick.get("best_ask")
+        if best_bid is not None and best_ask is not None:
+            self.event_midprice[event_id_str] = (float(best_bid) + float(best_ask)) / 2.0
+        else:
+            # WS 尚未推送挂单数据时，用 lastTradePrice 作为临时 midprice
+            self.event_midprice.setdefault(event_id_str, float(market_prob))
 
         market_question = tick.get("market_question") or tick.get("question") or tick.get("title") or ""
 
@@ -418,7 +427,7 @@ class LivePaperRunner:
             self.live_positions[event_id] = {
                 "side": live_side,
                 "entry_price": entry_ref_price,
-                "size": float(self.engine.cfg.base_trade_qty),
+                "size": None,  # 待入场订单成交确认后，从 filled_qty 填入
                 "hold_steps": 0,
                 "entry_ts": cur.get("ts") or row.get("ts"),
                 "entry_client_order_id": entry_client_order_id,
@@ -483,10 +492,15 @@ class LivePaperRunner:
                     )
                     self.live_positions.pop(event_id, None)
                     return
-                # 入场已确认活跃/成交，清除 ID 避免后续 tick 重复查询
+                # 入场已确认活跃/成交，从 filled_qty 更新实际持仓量
                 pos["entry_client_order_id"] = None
+                pos["size"] = entry_order.filled_qty if entry_order.filled_qty > 0 else pos.get("size")
 
-        qty = float(pos["size"]) if pos.get("size") is not None else float(self.engine.cfg.base_trade_qty)
+        size = pos.get("size")
+        if size is None or size <= 0:
+            self._safe_print(f"[live][warning] skip exit {event_id}: pos size unknown (entry not yet confirmed filled)")
+            return
+        qty = float(size)
         self.realized_pnl += gross * qty
         self.n_completed_trades += 1
         self._record_exit_trade(event_id, pos, gross, qty, cur.get("ts") or row.get("ts"))
@@ -503,25 +517,31 @@ class LivePaperRunner:
         self.live_positions.pop(event_id, None)
 
     def _compute_live_pnl(self) -> tuple[float, float]:
-        """返回 (realized_pnl, unrealized_pnl)，只统计本 session 新开仓位。
+        """返回 (realized_pnl, unrealized_pnl)。
 
-        Bootstrap 载入的历史仓位（bootstrapped=True）不计入 unrealized，
-        因为它们使用 WS lastTradePrice 定价会严重偏离实际，
-        且其 PnL 由 broker 独立追踪，不受本 session 控制。
+        - 本 session 新开仓位：用 WS lastTradePrice（行为不变）
+        - Bootstrap 历史仓位：用 event_midprice（启动时 REST 初始化，之后 WS bestBid/bestAsk 实时更新）
+          若 midprice 尚未就绪，跳过该仓位避免虚假 PnL。
         """
-        qty = float(self.engine.cfg.base_trade_qty)
         unrealized = 0.0
         for event_id, pos in self.live_positions.items():
-            if pos.get("bootstrapped"):
-                continue
+            pos_size = pos.get("size")
+            if pos_size is None or pos_size <= 0:
+                continue  # 入场订单尚未确认成交，跳过
             entry_price = float(pos.get("entry_price", 0.5))
             side = pos.get("side", "LONG_YES")
-            if side in ("SHORT_YES", "LONG_NO"):
-                no_fallback = 1.0 - self.event_latest_price[event_id] if event_id in self.event_latest_price else entry_price
-                cur_price = self._no_price(event_id, no_fallback)
+            if pos.get("bootstrapped"):
+                mid = self.event_midprice.get(event_id)
+                if mid is None:
+                    continue  # midprice 未就绪，跳过
+                cur_price = (1.0 - mid) if side in ("SHORT_YES", "LONG_NO") else mid
             else:
-                cur_price = self.event_latest_price.get(event_id, entry_price)
-            unrealized += (cur_price - entry_price) * qty
+                if side in ("SHORT_YES", "LONG_NO"):
+                    no_fallback = 1.0 - self.event_latest_price[event_id] if event_id in self.event_latest_price else entry_price
+                    cur_price = self._no_price(event_id, no_fallback)
+                else:
+                    cur_price = self.event_latest_price.get(event_id, entry_price)
+            unrealized += (cur_price - entry_price) * float(pos_size)
         return self.realized_pnl, unrealized
 
     def _record_exit_trade(self, event_id: str, pos: dict, gross: float, qty: float, exit_ts: Any) -> None:
@@ -571,6 +591,11 @@ class LivePaperRunner:
 
             side = "SHORT_YES" if asset_id in no_asset_ids else "LONG_YES"
             entry_price = float(avg_price) if avg_price is not None else 0.5
+
+            # 用 curPrice 初始化 midprice 缓存，避免启动时再发一次 API 请求
+            cur_price = snap.get("cur_price")
+            if cur_price is not None:
+                self.event_midprice[market_id] = float(cur_price)
 
             self.live_positions[market_id] = {
                 "side": side,
