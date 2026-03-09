@@ -102,6 +102,7 @@ class LivePaperRunner:
         self.n_completed_trades: int = 0
         self.event_latest_price: dict[str, float] = {}
         self.execution_submitted_keys: set[str] = set()
+        self._csv_headers_written: set[str] = set()
         self.tick_count = 0
         self._raw_tick_attempts = 0
         self.runtime_error_count = 0
@@ -230,10 +231,15 @@ class LivePaperRunner:
         if bool(flags.get("hard_stop")):
             self._trigger_circuit_breaker("execution_hard_stop", payload={"execution_flags": flags})
 
-    def _append_summary_row(self, market_id: str, summary: dict[str, Any], n_new: int) -> None:
-        out_path = Path(self.cfg.summary_csv)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+    def _append_csv(self, path: Path, row: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        key = str(path)
+        write_header = key not in self._csv_headers_written
+        row_df = pd.DataFrame([row])
+        row_df.to_csv(path, mode="a", header=write_header, index=False)
+        self._csv_headers_written.add(key)
 
+    def _append_summary_row(self, market_id: str, summary: dict[str, Any], n_new: int) -> None:
         row = {
             "logged_at": pd.Timestamp.now("UTC").isoformat(),
             "market_id": market_id,
@@ -245,36 +251,8 @@ class LivePaperRunner:
             "avg_pnl": float(summary.get("avg_pnl", 0.0) or 0.0),
             "win_rate": float(summary.get("win_rate", 0.0) or 0.0),
         }
-
-        df = pd.DataFrame([row])
-        write_header = not out_path.exists()
-        df.to_csv(out_path, mode="a", header=write_header, index=False)
+        self._append_csv(Path(self.cfg.summary_csv), row)
         self._append_event("summary", row)
-
-    def _dump_new_trades(self, trades: pd.DataFrame) -> int:
-        if trades.empty:
-            return 0
-
-        out_path = Path(self.cfg.out_csv)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-
-        new_rows = []
-        for _, r in trades.iterrows():
-            key = f"{r['event_id']}|{r['entry_ts']}|{r['exit_ts']}|{r['side']}"
-            if key in self.seen_trade_keys:
-                continue
-            self.seen_trade_keys.add(key)
-            new_rows.append(r.to_dict())
-
-        if not new_rows:
-            return 0
-
-        new_df = pd.DataFrame(new_rows)
-        write_header = not out_path.exists()
-        new_df.to_csv(out_path, mode="a", header=write_header, index=False)
-        for r in new_rows:
-            self._append_event("trade", r)
-        return len(new_df)
 
     @staticmethod
     def _clamp_price(v: float) -> float:
@@ -551,10 +529,7 @@ class LivePaperRunner:
             "qty": qty,
             "pnl": gross * qty,
         }
-        out_path = Path(self.cfg.out_csv)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        write_header = not out_path.exists()
-        pd.DataFrame([trade_row]).to_csv(out_path, mode="a", header=write_header, index=False)
+        self._append_csv(Path(self.cfg.out_csv), trade_row)
         self._append_event("trade", trade_row)
 
     def bootstrap_positions_from_snapshot(

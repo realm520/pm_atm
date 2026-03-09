@@ -57,8 +57,6 @@ def test_live_runner_normalize_and_dump(tmp_path: Path) -> None:
     assert 0.0 < row["ecmwf_prob"] < 1.0
 
     # no trades should not create trades file
-    n = runner._dump_new_trades(runner.engine.run(pd.DataFrame([row]))["trades"])
-    assert n == 0
     assert not out_file.exists()
 
     # on_tick should write summary rows
