@@ -57,7 +57,7 @@ class LiveRunnerConfig:
     error_log: str = "logs/live_errors.log"
     alerts_jsonl: str = "logs/live_alerts.jsonl"
     kill_switch_path: str = ""
-    hard_daily_loss_limit: float = -12.0
+    hard_daily_loss_limit: float = -30.0
     max_runtime_errors: int = 50
     alert_cooldown_sec: float = 120.0
     entry_price_buffer: float = 0.003
@@ -211,13 +211,14 @@ class LivePaperRunner:
         self._safe_print(f"[live][{level}] {code}: {message}")
         self._send_telegram_alert(level, f"{code}: {message}")
 
-    def _trigger_circuit_breaker(self, reason: str, payload: dict[str, Any] | None = None) -> None:
+    def _trigger_circuit_breaker(self, reason: str, payload: dict[str, Any] | None = None, message: str | None = None) -> None:
         if self._halted:
             raise CircuitBreakerTriggered(reason)
         self._halted = True
-        self._append_alert("critical", "circuit_breaker", f"halted by {reason}", payload=payload or {"reason": reason})
+        msg = message or f"halted by {reason}"
+        self._append_alert("critical", "circuit_breaker", msg, payload=payload or {"reason": reason})
         self._append_event("circuit_breaker", {"reason": reason, **(payload or {})})
-        raise CircuitBreakerTriggered(reason)
+        raise CircuitBreakerTriggered(msg)
 
     def _check_execution_health(self) -> None:
         if self.execution_service is None:
@@ -620,6 +621,7 @@ class LivePaperRunner:
                 self._trigger_circuit_breaker(
                     "daily_loss_limit",
                     payload={"total_pnl": total_pnl, "hard_daily_loss_limit": self.cfg.hard_daily_loss_limit},
+                    message=f"halted by daily_loss_limit: total_pnl={total_pnl:.4f} <= limit={self.cfg.hard_daily_loss_limit:.4f}",
                 )
 
             self._check_execution_health()
