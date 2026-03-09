@@ -595,9 +595,10 @@ class LivePaperRunner:
             entry_price = float(avg_price) if avg_price is not None else 0.5
 
             # 用 curPrice 初始化 midprice 缓存，避免启动时再发一次 API 请求
+            # event_midprice 始终存 YES token 的价格；SHORT_YES 持有的是 NO token，需要转换
             cur_price = snap.get("cur_price")
             if cur_price is not None:
-                self.event_midprice[market_id] = float(cur_price)
+                self.event_midprice[market_id] = (1.0 - float(cur_price)) if side == "SHORT_YES" else float(cur_price)
 
             self.live_positions[market_id] = {
                 "side": side,
