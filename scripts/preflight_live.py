@@ -8,6 +8,7 @@ import sys
 import time
 
 import requests
+from eth_abi import encode as abi_encode
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import ApiCreds, BalanceAllowanceParams
 from py_clob_client.config import get_contract_config
@@ -52,7 +53,6 @@ def _wait_receipt(rpc_url: str, tx_hash: str, timeout: int = 90) -> dict:
 
 def onchain_approve_usdc(pk: str, chain_id: int, usdc: str, spenders: list[str], rpc_url: str) -> None:
     from eth_account import Account
-    from eth_abi import encode
 
     acct = Account.from_key(pk)
     wallet = acct.address
@@ -60,7 +60,7 @@ def onchain_approve_usdc(pk: str, chain_id: int, usdc: str, spenders: list[str],
     gas_price = int(int(_rpc(rpc_url, "eth_gasPrice", []), 16) * 1.2)
 
     for spender in spenders:
-        calldata = "0x" + (APPROVE_SELECTOR + encode(["address", "uint256"], [spender, MAX_UINT256])).hex()
+        calldata = "0x" + (APPROVE_SELECTOR + abi_encode(["address", "uint256"], [spender, MAX_UINT256])).hex()
         gas = int(
             int(_rpc(rpc_url, "eth_estimateGas", [{"from": wallet, "to": usdc, "data": calldata}]), 16) * 1.3
         )
@@ -88,7 +88,6 @@ def onchain_approve_usdc(pk: str, chain_id: int, usdc: str, spenders: list[str],
 
 def onchain_set_approval_for_all(pk: str, chain_id: int, ctf: str, operators: list[str], rpc_url: str) -> None:
     from eth_account import Account
-    from eth_abi import encode
 
     acct = Account.from_key(pk)
     wallet = acct.address
@@ -96,7 +95,7 @@ def onchain_set_approval_for_all(pk: str, chain_id: int, ctf: str, operators: li
     gas_price = int(int(_rpc(rpc_url, "eth_gasPrice", []), 16) * 1.5)
 
     for operator in operators:
-        calldata = "0x" + (SET_APPROVAL_FOR_ALL_SELECTOR + encode(["address", "bool"], [operator, True])).hex()
+        calldata = "0x" + (SET_APPROVAL_FOR_ALL_SELECTOR + abi_encode(["address", "bool"], [operator, True])).hex()
         try:
             gas = int(int(_rpc(rpc_url, "eth_estimateGas", [{"from": wallet, "to": ctf, "data": calldata}]), 16) * 1.3)
         except Exception:
@@ -175,10 +174,11 @@ def main() -> None:
     allowances = (bal or {}).get("allowances") or {}
     max_allowance = _max_allowance(allowances)
 
+    contract_cfg = get_contract_config(acct.chain_id)
+
     if max_allowance <= 0 and args.auto_approve_allowance:
         zero_spenders = [s for s, v in allowances.items() if _max_allowance({s: v}) == 0]
         if zero_spenders:
-            contract_cfg = get_contract_config(acct.chain_id)
             print(f"[preflight] onchain approve: usdc={contract_cfg.collateral} spenders={zero_spenders} rpc={args.polygon_rpc}")
             onchain_approve_usdc(pk, acct.chain_id, contract_cfg.collateral, zero_spenders, args.polygon_rpc)
         # sync Polymarket state after onchain approve
@@ -193,8 +193,6 @@ def main() -> None:
 
     # --- CONDITIONAL (CTF token / ERC-1155) setApprovalForAll check ---
     # setApprovalForAll 是全局 operator 授权（非 per-token），链上查 isApprovedForAll 最准确
-    from eth_abi import encode as abi_encode
-    contract_cfg = get_contract_config(acct.chain_id)
     ctf_addr = contract_cfg.conditional_tokens
     exchange_operator = contract_cfg.exchange
     owner = acct.wallet_address

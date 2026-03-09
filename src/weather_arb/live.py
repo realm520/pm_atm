@@ -518,12 +518,13 @@ class LivePaperRunner:
         )
         self.live_positions.pop(event_id, None)
 
-    def _compute_live_pnl(self, verbose: bool = False) -> tuple[float, float]:
+    def _compute_live_pnl(self, log_breakdown: bool = False) -> tuple[float, float]:
         """返回 (realized_pnl, unrealized_pnl)。
 
         - 本 session 新开仓位：用 WS lastTradePrice（行为不变）
         - Bootstrap 历史仓位：用 event_midprice（启动时 REST 初始化，之后 WS bestBid/bestAsk 实时更新）
           若 midprice 尚未就绪，跳过该仓位避免虚假 PnL。
+        - log_breakdown=True 时同步打印逐仓明细（单次遍历，无额外开销）。
         """
         unrealized = 0.0
         for event_id, pos in self.live_positions.items():
@@ -544,7 +545,7 @@ class LivePaperRunner:
                 else:
                     cur_price = self.event_latest_price.get(event_id, entry_price)
             pos_unrealized = (cur_price - entry_price) * float(pos_size)
-            if verbose:
+            if log_breakdown:
                 self._safe_print(
                     f"[pnl_debug] {event_id[:16]} side={side} boot={pos.get('bootstrapped', False)} "
                     f"entry={entry_price:.4f} cur={cur_price:.4f} size={pos_size:.2f} "
@@ -664,8 +665,8 @@ class LivePaperRunner:
             realized, unrealized = self._compute_live_pnl()
             total_pnl = realized + unrealized
             if self.cfg.enable_daily_loss_circuit_breaker and total_pnl <= self.cfg.hard_daily_loss_limit:
-                # 触发前打印逐仓明细，方便诊断虚假熔断
-                self._compute_live_pnl(verbose=True)
+                # 触发前重算并打印逐仓明细，方便诊断虚假熔断
+                self._compute_live_pnl(log_breakdown=True)
                 self._trigger_circuit_breaker(
                     "daily_loss_limit",
                     payload={"total_pnl": total_pnl, "hard_daily_loss_limit": self.cfg.hard_daily_loss_limit},
