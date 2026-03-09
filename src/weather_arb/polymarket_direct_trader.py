@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
-from py_clob_client.clob_types import BookParams
+import requests
 
 from .polymarket_account import PolymarketAccount
 
@@ -101,70 +100,39 @@ class PolymarketDirectTrader:
         private_key: str,
         open_only: bool = False,
     ) -> list[PositionPnl]:
-        """按 token_id 聚合成交记录，结合当前市场价计算持仓盈亏。"""
-        client = self._build_client(account, private_key)
-        trades: list[dict] = client.get_trades()
-
-        # 按 asset_id 聚合
-        buckets: dict[str, dict] = defaultdict(lambda: {
-            "market": "",
-            "buy_qty": 0.0,
-            "buy_cost": 0.0,
-            "sell_qty": 0.0,
-            "sell_revenue": 0.0,
-        })
-        for t in trades:
-            tid = t.get("asset_id") or t.get("token_id", "")
-            if not tid:
-                continue
-            b = buckets[tid]
-            if not b["market"]:
-                b["market"] = t.get("market", "")
-            side = str(t.get("side", "")).upper()
-            price = float(t.get("price", 0))
-            size = float(t.get("size", 0))
-            if side == "BUY":
-                b["buy_qty"] += size
-                b["buy_cost"] += price * size
-            elif side == "SELL":
-                b["sell_qty"] += size
-                b["sell_revenue"] += price * size
-
-        # 批量获取当前价格
-        price_map: dict[str, float] = {}
-        if buckets:
-            book_params = [BookParams(token_id=tid) for tid in buckets]
-            prices = client.get_last_trades_prices(book_params)
-            for p in prices:
-                price_map[p.get("token_id", "")] = float(p.get("price", 0))
+        """从 Polymarket data API 查询实际持仓盈亏（基于链上余额，非成交流水重建）。"""
+        resp = requests.get(
+            "https://data-api.polymarket.com/positions",
+            params={"user": account.funder, "sizeThreshold": 0.01, "limit": 500},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        raw: list[dict] = resp.json()
 
         results: list[PositionPnl] = []
-        for tid, b in buckets.items():
-            buy_qty = b["buy_qty"]
-            sell_qty = b["sell_qty"]
-            buy_cost = b["buy_cost"]
-            sell_revenue = b["sell_revenue"]
-            net_qty = buy_qty - sell_qty
-
+        for p in raw:
+            net_qty = float(p.get("size", 0))
             if open_only and net_qty <= 0:
                 continue
 
-            avg_cost = (buy_cost / buy_qty) if buy_qty > 0 else 0.0
-            realized_pnl = sell_revenue - (avg_cost * sell_qty)
-            current_price = price_map.get(tid, 0.0)
-            unrealized_pnl = (current_price - avg_cost) * net_qty if net_qty > 0 else 0.0
+            total_bought = float(p.get("totalBought", 0))
+            avg_cost = float(p.get("avgPrice", 0))
+            current_price = float(p.get("curPrice", 0))
+            unrealized_pnl = float(p.get("cashPnl", 0))
+            realized_pnl = float(p.get("realizedPnl", 0))
+            total_sold = max(0.0, total_bought - net_qty)
 
             results.append(
                 PositionPnl(
-                    token_id=tid,
-                    market=b["market"],
+                    token_id=str(p.get("asset", "")),
+                    market=str(p.get("title", "")),
                     net_qty=net_qty,
                     avg_cost=avg_cost,
                     current_price=current_price,
                     unrealized_pnl=unrealized_pnl,
                     realized_pnl=realized_pnl,
-                    total_bought=buy_qty,
-                    total_sold=sell_qty,
+                    total_bought=total_bought,
+                    total_sold=total_sold,
                 )
             )
 
