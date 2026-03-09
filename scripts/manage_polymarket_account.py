@@ -59,6 +59,13 @@ def main() -> None:
     p_positions.add_argument("--vault", default="state/polymarket_accounts.json")
     p_positions.add_argument("--open-only", action="store_true", help="只显示净持仓 > 0 的标的")
 
+    p_close = sub.add_parser("close-all", help="平掉所有净多仓位（发市价 SELL 单）")
+    p_close.add_argument("--name", required=True)
+    p_close.add_argument("--vault", default="state/polymarket_accounts.json")
+    p_close.add_argument("--min-qty", type=float, default=0.0, help="跳过 net_qty <= 此值的仓位（默认 0）")
+    p_close.add_argument("--price-offset", type=float, default=0.0, help="价格偏移（如 -0.02 表示当前价下调 0.02）")
+    p_close.add_argument("--dry-run", action="store_true", help="只显示将要执行的操作，不实际下单")
+
     p_deposit = sub.add_parser("show-deposit-addresses", help="Fetch bridge deposit addresses for account funder")
     p_deposit.add_argument("--name", required=True)
     p_deposit.add_argument("--vault", default="state/polymarket_accounts.json")
@@ -169,6 +176,17 @@ def main() -> None:
     if args.cmd == "trades":
         res = trader.get_trades(account=account, private_key=private_key)
         print(json.dumps(res, ensure_ascii=False, indent=2))
+        return
+
+    if args.cmd == "close-all":
+        results = trader.close_all_positions(
+            account=account,
+            private_key=private_key,
+            min_qty=args.min_qty,
+            price_offset=args.price_offset,
+            dry_run=args.dry_run,
+        )
+        print(json.dumps(results, ensure_ascii=False, indent=2))
         return
 
     if args.cmd == "positions":

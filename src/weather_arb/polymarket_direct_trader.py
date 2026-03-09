@@ -55,20 +55,11 @@ class PolymarketDirectTrader:
             funder=account.funder,
         )
 
-    def place_order(
-        self,
-        *,
-        account: PolymarketAccount,
-        private_key: str,
-        req: DirectOrderRequest,
-        order_type: str = "GTC",
-    ) -> dict[str, Any]:
-        client = self._build_client(account, private_key)
+    def _post_order(self, client: Any, req: DirectOrderRequest, order_type: str = "GTC") -> dict[str, Any]:
         side = str(req.side).upper()
         if side not in {"BUY", "SELL"}:
             raise ValueError("side must be BUY or SELL")
 
-        # py_clob_client uses create_order + post_order flow.
         from py_clob_client.clob_types import OrderArgs
 
         order_args = OrderArgs(
@@ -79,6 +70,17 @@ class PolymarketDirectTrader:
         )
         signed_order = client.create_order(order_args)
         return client.post_order(signed_order, order_type)
+
+    def place_order(
+        self,
+        *,
+        account: PolymarketAccount,
+        private_key: str,
+        req: DirectOrderRequest,
+        order_type: str = "GTC",
+    ) -> dict[str, Any]:
+        client = self._build_client(account, private_key)
+        return self._post_order(client, req, order_type)
 
     def cancel_order(self, *, account: PolymarketAccount, private_key: str, order_id: str) -> Any:
         client = self._build_client(account, private_key)
@@ -167,4 +169,56 @@ class PolymarketDirectTrader:
             )
 
         results.sort(key=lambda x: abs(x.net_qty), reverse=True)
+        return results
+
+    def close_all_positions(
+        self,
+        *,
+        account: PolymarketAccount,
+        private_key: str,
+        min_qty: float = 0.0,
+        price_offset: float = 0.0,
+        dry_run: bool = False,
+    ) -> list[dict[str, Any]]:
+        """平掉所有净多仓位（net_qty > min_qty）。
+
+        Args:
+            min_qty: 低于此数量的仓位跳过（默认 0，即平所有净多头）。
+            price_offset: 在当前价基础上的价格偏移（负值=向下调整，默认 0）。
+            dry_run: 若为 True，只返回待执行订单列表，不实际下单。
+
+        Returns:
+            每个仓位的执行结果列表。
+        """
+        positions = self.get_positions_pnl(account=account, private_key=private_key, open_only=True)
+        positions = [p for p in positions if p.net_qty > min_qty]
+
+        results: list[dict[str, Any]] = []
+        client = None if dry_run else self._build_client(account, private_key)
+
+        for pos in positions:
+            price = max(0.01, min(0.99, round(pos.current_price + price_offset, 4)))
+            entry: dict[str, Any] = {
+                "token_id": pos.token_id,
+                "market": pos.market,
+                "net_qty": pos.net_qty,
+                "sell_price": price,
+            }
+            if dry_run:
+                entry["status"] = "skipped (dry_run)"
+                results.append(entry)
+                continue
+
+            try:
+                resp = self._post_order(
+                    client,
+                    DirectOrderRequest(token_id=pos.token_id, price=price, size=pos.net_qty, side="SELL"),
+                )
+                entry["status"] = "ok"
+                entry["response"] = resp
+            except Exception as exc:
+                entry["status"] = "error"
+                entry["error"] = str(exc)
+            results.append(entry)
+
         return results
