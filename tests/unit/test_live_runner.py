@@ -31,7 +31,7 @@ class DummyExecutionService:
             "consecutive_rejected": 0,
         }
 
-    def get_order_by_client_id(self, client_order_id: str):
+    def get_order_by_client_id(self, client_order_id: str) -> None:
         return None
 
 

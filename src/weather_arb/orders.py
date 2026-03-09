@@ -30,6 +30,14 @@ TERMINAL_STATUSES: set[OrderStatus] = {
     OrderStatus.FAILED,
 }
 
+# 终态但未成交的状态：入场订单落入此集合表示未买入任何 token
+UNFILLED_TERMINAL_STATUSES: set[OrderStatus] = {
+    OrderStatus.FAILED,
+    OrderStatus.REJECTED,
+    OrderStatus.CANCELED,
+    OrderStatus.EXPIRED,
+}
+
 
 @dataclass(frozen=True)
 class ExecutionIntent:

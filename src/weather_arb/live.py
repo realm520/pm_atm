@@ -11,7 +11,7 @@ import pandas as pd
 import requests
 
 from .engine import PaperArbEngine
-from .orders import ExecutionIntent, OrderSide
+from .orders import ExecutionIntent, OrderRecord, OrderSide, UNFILLED_TERMINAL_STATUSES
 
 
 class ForecastProvider(Protocol):
@@ -22,7 +22,7 @@ class ExecutionHealthProvider(Protocol):
     def submit(self, intent: ExecutionIntent) -> Any: ...
     def refresh_recent(self, limit: int = 200) -> list[Any]: ...
     def risk_flags(self, minutes: int = 5) -> dict[str, bool | float | int]: ...
-    def get_order_by_client_id(self, client_order_id: str) -> Any: ...
+    def get_order_by_client_id(self, client_order_id: str) -> OrderRecord | None: ...
 
 
 class CircuitBreakerTriggered(RuntimeError):
@@ -456,27 +456,28 @@ class LivePaperRunner:
             return
 
         # 出场前检查入场订单是否真正成交，避免因入场未成交导致 SELL "not enough balance"
+        # entry_client_order_id 首次确认已成交后会被置 None，后续 tick 跳过此查询
         entry_coid = pos.get("entry_client_order_id")
         if entry_coid and self.execution_service is not None:
             entry_order = self.execution_service.get_order_by_client_id(entry_coid)
             if entry_order is not None:
-                from .orders import OrderStatus
-                entry_status = getattr(entry_order, "status", None)
-                if entry_status in {OrderStatus.FAILED, OrderStatus.REJECTED, OrderStatus.CANCELED}:
+                if entry_order.status in UNFILLED_TERMINAL_STATUSES:
                     self._append_event(
                         "execution_skip",
                         {
                             "reason": "entry_not_filled",
                             "event_id": event_id,
                             "entry_client_order_id": entry_coid,
-                            "entry_status": str(entry_status),
+                            "entry_status": str(entry_order.status),
                         },
                     )
                     self._safe_print(
-                        f"[live][warning] skip exit {event_id}: entry order {entry_coid} status={entry_status}, no tokens to sell"
+                        f"[live][warning] skip exit {event_id}: entry order {entry_coid} status={entry_order.status}, no tokens to sell"
                     )
                     self.live_positions.pop(event_id, None)
                     return
+                # 入场已确认活跃/成交，清除 ID 避免后续 tick 重复查询
+                pos["entry_client_order_id"] = None
 
         self._submit_execution_intent(
             event_id=event_id,
