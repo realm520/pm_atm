@@ -264,7 +264,7 @@ def main() -> None:
         runner.event_no_asset_id.update({k: v[1] for k, v in market_yes_no.items()})
 
         # Bootstrap existing positions from exchange at startup
-        _executor = getattr(execution_service, "exchange", None) if execution_service else None
+        _executor = getattr(execution_service, "exchange", None)
         if _executor is not None and hasattr(_executor, "get_positions_snapshot"):
             print("[startup] querying existing open positions from exchange...", flush=True)
             try:

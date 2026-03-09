@@ -526,7 +526,8 @@ class LivePaperRunner:
         Any asset_id found in *snapshots* that maps to a known market is loaded into
         live_positions with hold_steps=0 (entry already confirmed filled).
         """
-        no_asset_to_market = {v[1]: k for k, v in market_yes_no.items()}
+        no_asset_ids = {v[1] for v in market_yes_no.values()}
+        n_bootstrapped = 0
 
         for snap in snapshots:
             asset_id = str(snap.get("asset_id", ""))
@@ -540,7 +541,7 @@ class LivePaperRunner:
             if market_id in self.live_positions:
                 continue  # already loaded (shouldn't happen at startup)
 
-            side = "SHORT_YES" if asset_id in no_asset_to_market else "LONG_YES"
+            side = "SHORT_YES" if asset_id in no_asset_ids else "LONG_YES"
             entry_price = float(avg_price) if avg_price is not None else 0.5
 
             self.live_positions[market_id] = {
@@ -564,10 +565,11 @@ class LivePaperRunner:
                 f"[live][startup] bootstrapped position: market={market_id} side={side} "
                 f"entry_price={entry_price:.4f} size={size}"
             )
+            n_bootstrapped += 1
 
-        if self.live_positions:
+        if n_bootstrapped:
             self._safe_print(
-                f"[live][startup] {len(self.live_positions)} existing position(s) loaded, strategy continues from here"
+                f"[live][startup] {n_bootstrapped} existing position(s) loaded, strategy continues from here"
             )
         else:
             self._safe_print("[live][startup] no existing positions found, starting fresh")

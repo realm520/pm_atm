@@ -126,11 +126,11 @@ class PolymarketSdkExecutor(ExchangeExecutionPort):
                 continue
             if asset_set and str(aid) not in asset_set:
                 continue
-            size_raw = next((self._get(p, k) for k in _POSITION_SIZE_KEYS if self._get(p, k) is not None), None)
+            size_raw = next((v for k in _POSITION_SIZE_KEYS if (v := self._get(p, k)) is not None), None)
             size = float(size_raw) if size_raw is not None else 0.0
             if size <= 0:
                 continue
-            price_raw = next((self._get(p, k) for k in _POSITION_PRICE_KEYS if self._get(p, k) is not None), None)
+            price_raw = next((v for k in _POSITION_PRICE_KEYS if (v := self._get(p, k)) is not None), None)
             result.append({
                 "asset_id": str(aid),
                 "size": size,
