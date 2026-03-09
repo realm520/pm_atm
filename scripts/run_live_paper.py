@@ -60,6 +60,7 @@ def main() -> None:
     parser.add_argument("--alerts-jsonl", default="logs/live_alerts.jsonl")
     parser.add_argument("--kill-switch-path", default="", help="If file exists, runner halts gracefully")
     parser.add_argument("--hard-daily-loss-limit", type=float, default=-12.0, help="Circuit breaker when total_pnl <= this value")
+    parser.add_argument("--no-daily-loss-circuit-breaker", action="store_true", help="Disable the daily loss circuit breaker")
     parser.add_argument("--max-runtime-errors", type=int, default=50, help="Circuit breaker after N on_tick runtime errors")
     parser.add_argument("--alert-cooldown-sec", type=float, default=120.0, help="Min seconds between identical alert codes")
     parser.add_argument("--telegram-bot-token", default="", help="Optional Telegram bot token for runtime alerts")
@@ -196,6 +197,7 @@ def main() -> None:
             alerts_jsonl=args.alerts_jsonl,
             kill_switch_path=args.kill_switch_path,
             hard_daily_loss_limit=args.hard_daily_loss_limit,
+            enable_daily_loss_circuit_breaker=not args.no_daily_loss_circuit_breaker,
             max_runtime_errors=args.max_runtime_errors,
             alert_cooldown_sec=args.alert_cooldown_sec,
             telegram_bot_token=args.telegram_bot_token,

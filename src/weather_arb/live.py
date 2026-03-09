@@ -58,6 +58,7 @@ class LiveRunnerConfig:
     alerts_jsonl: str = "logs/live_alerts.jsonl"
     kill_switch_path: str = ""
     hard_daily_loss_limit: float = -30.0
+    enable_daily_loss_circuit_breaker: bool = True
     max_runtime_errors: int = 50
     alert_cooldown_sec: float = 120.0
     entry_price_buffer: float = 0.003
@@ -653,7 +654,7 @@ class LivePaperRunner:
 
             realized, unrealized = self._compute_live_pnl()
             total_pnl = realized + unrealized
-            if total_pnl <= self.cfg.hard_daily_loss_limit:
+            if self.cfg.enable_daily_loss_circuit_breaker and total_pnl <= self.cfg.hard_daily_loss_limit:
                 self._trigger_circuit_breaker(
                     "daily_loss_limit",
                     payload={"total_pnl": total_pnl, "hard_daily_loss_limit": self.cfg.hard_daily_loss_limit},
