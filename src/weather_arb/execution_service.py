@@ -53,8 +53,8 @@ class ExecutionService:
         notional = round(intent.qty * effective_price, 4)
         if notional < self.cfg.min_order_notional:
             reject_reason = f"notional ${notional:.4f} below min ${self.cfg.min_order_notional}"
-            # Local validation failure — does not count as exchange reject
-            return self.store.transition_order(order.order_id, OrderStatus.REJECTED, reject_reason=reject_reason)
+            # Local validation failure — use FAILED (not REJECTED) so it does NOT count toward reject_rate
+            return self.store.transition_order(order.order_id, OrderStatus.FAILED, reject_reason=reject_reason)
 
         try:
             exchange_order_id, status, reject_reason = self.exchange.place_order(intent)

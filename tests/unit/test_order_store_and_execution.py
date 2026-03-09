@@ -38,7 +38,7 @@ def test_execution_service_submit_and_refresh_fill(tmp_path) -> None:
         event_id="e1",
         asset_id="a1",
         side=OrderSide.BUY,
-        qty=2.0,
+        qty=3.0,
         limit_price=0.43,
         client_order_id="cid-2",
     )
@@ -47,7 +47,7 @@ def test_execution_service_submit_and_refresh_fill(tmp_path) -> None:
 
     refreshed = svc.refresh(order)
     assert refreshed.status == OrderStatus.FILLED
-    assert refreshed.filled_qty == 2.0
+    assert refreshed.filled_qty == 3.0
     assert refreshed.avg_fill_price is not None
     store.close()
 
@@ -61,7 +61,7 @@ def test_execution_service_timeout_cancel(tmp_path) -> None:
         event_id="e1",
         asset_id="a1",
         side=OrderSide.SELL,
-        qty=1.0,
+        qty=2.0,
         limit_price=0.62,
         client_order_id="cid-3",
     )

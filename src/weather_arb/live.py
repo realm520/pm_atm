@@ -521,6 +521,17 @@ class LivePaperRunner:
             self._safe_print(f"[live][warning] skip exit {event_id}: pos size unknown (entry not yet confirmed filled)")
             return
         qty = float(size)
+        exit_limit_price = self._limit_price_from_tick(exit_tick, side=exit_side, action="exit", fallback=market_prob)
+        exit_effective_price = round(self._clamp_price(exit_limit_price), 2)
+        exit_notional = round(exit_effective_price * qty, 4)
+        if exit_notional < self._MIN_ORDER_NOTIONAL:
+            self._append_alert(
+                "warning",
+                "execution_skip_exit_notional",
+                f"abandon exit {event_id}: notional ${exit_notional:.4f} < min ${self._MIN_ORDER_NOTIONAL} (qty={qty} price={exit_effective_price}), removing tiny position",
+            )
+            self.live_positions.pop(event_id, None)
+            return
         self.realized_pnl += gross * qty
         self.n_completed_trades += 1
         self._record_exit_trade(event_id, pos, gross, qty, cur.get("ts") or row.get("ts"))
@@ -528,7 +539,7 @@ class LivePaperRunner:
             event_id=event_id,
             side=exit_side,
             qty=qty,
-            limit_price=self._limit_price_from_tick(exit_tick, side=exit_side, action="exit", fallback=market_prob),
+            limit_price=exit_limit_price,
             action="exit",
             ts=cur.get("ts") or row.get("ts"),
             asset_id=exit_asset_id,
