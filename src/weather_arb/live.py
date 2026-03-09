@@ -502,14 +502,20 @@ class LivePaperRunner:
         self.live_positions.pop(event_id, None)
 
     def _compute_live_pnl(self) -> tuple[float, float]:
-        """返回 (realized_pnl, unrealized_pnl)，基于真实持仓。"""
+        """返回 (realized_pnl, unrealized_pnl)，只统计本 session 新开仓位。
+
+        Bootstrap 载入的历史仓位（bootstrapped=True）不计入 unrealized，
+        因为它们使用 WS lastTradePrice 定价会严重偏离实际，
+        且其 PnL 由 broker 独立追踪，不受本 session 控制。
+        """
         qty = float(self.engine.cfg.base_trade_qty)
         unrealized = 0.0
         for event_id, pos in self.live_positions.items():
+            if pos.get("bootstrapped"):
+                continue
             entry_price = float(pos.get("entry_price", 0.5))
             side = pos.get("side", "LONG_YES")
             if side in ("SHORT_YES", "LONG_NO"):
-                # 无实时 tick 时 fallback 到 entry_price，避免用默认 0.5 产生虚假亏损
                 no_fallback = 1.0 - self.event_latest_price[event_id] if event_id in self.event_latest_price else entry_price
                 cur_price = self._no_price(event_id, no_fallback)
             else:
@@ -571,6 +577,7 @@ class LivePaperRunner:
                 "hold_steps": 0,
                 "entry_ts": pd.Timestamp.now("UTC").isoformat(),
                 "entry_client_order_id": None,  # already filled, skip fill-check
+                "bootstrapped": True,  # 历史仓位，不计入本 session PnL
             }
             self._append_event(
                 "position_bootstrapped",
