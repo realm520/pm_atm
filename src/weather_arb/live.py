@@ -743,7 +743,7 @@ class LivePaperRunner:
                 continue
 
             is_no_token = asset_id in no_asset_ids
-            ref_price = float(cur_price) if cur_price is not None else (0.5 if not is_no_token else 0.5)
+            ref_price = float(cur_price) if cur_price is not None else 0.5
 
             # Aggressive sell price: bid - buffer, clamped to [0.01, 0.99]
             limit_price = self._clamp_price(ref_price - self.cfg.exit_price_buffer)
