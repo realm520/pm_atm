@@ -81,6 +81,7 @@ class PolymarketSdkExecutor(ExchangeExecutionPort):
 
     def place_order(self, intent: ExecutionIntent) -> tuple[str, OrderStatus, str]:
         from py_clob_client.clob_types import OrderArgs
+        from py_clob_client.exceptions import PolyApiException
 
         order_type = self.cfg.entry_order_type if intent.action == "entry" else self.cfg.exit_order_type
         price, size = sanitize_order_amounts(intent.side.value, float(intent.limit_price), float(intent.qty))
@@ -92,6 +93,14 @@ class PolymarketSdkExecutor(ExchangeExecutionPort):
             st = self._status(self._get(resp, "status", "NEW"))
             print(f"[executor] place_order submitted: order_id={oid} {self._fmt_intent(intent)} actual_price={price} actual_size={size} status={st}", flush=True)
             return oid, st, ""
+        except PolyApiException as exc:
+            # Orderbook closed/delisted — not a real reject; use FAILED to exclude from reject_rate
+            err_msg = exc.error_msg if isinstance(exc.error_msg, dict) else {}
+            if "does not exist" in str(err_msg.get("error", "")).lower():
+                print(f"[executor] place_order SKIPPED (orderbook gone): {self._fmt_intent(intent)} err={exc}", flush=True)
+                return "", OrderStatus.FAILED, str(exc)
+            print(f"[executor] place_order FAILED: {self._fmt_intent(intent)} err={exc}", flush=True)
+            return "", OrderStatus.REJECTED, str(exc)
         except Exception as exc:
             print(f"[executor] place_order FAILED: {self._fmt_intent(intent)} err={exc}", flush=True)
             return "", OrderStatus.REJECTED, str(exc)
