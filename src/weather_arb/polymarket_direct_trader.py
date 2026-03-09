@@ -6,6 +6,7 @@ from typing import Any
 import requests
 
 from .polymarket_account import PolymarketAccount
+from .polymarket_utils import sanitize_order_amounts
 
 
 @dataclass
@@ -61,10 +62,11 @@ class PolymarketDirectTrader:
 
         from py_clob_client.clob_types import OrderArgs
 
+        price, size = sanitize_order_amounts(side, float(req.price), float(req.size))
         order_args = OrderArgs(
             token_id=str(req.token_id),
-            price=float(req.price),
-            size=float(req.size),
+            price=price,
+            size=size,
             side=side,
         )
         signed_order = client.create_order(order_args)

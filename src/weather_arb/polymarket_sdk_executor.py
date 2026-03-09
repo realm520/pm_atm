@@ -8,6 +8,7 @@ import requests
 from .execution_service import ExchangeExecutionPort
 from .orders import ExecutionIntent, Fill, OrderStatus
 from .polymarket_account import PolymarketAccount
+from .polymarket_utils import sanitize_order_amounts
 
 
 @dataclass(frozen=True)
@@ -82,13 +83,14 @@ class PolymarketSdkExecutor(ExchangeExecutionPort):
         from py_clob_client.clob_types import OrderArgs
 
         order_type = self.cfg.entry_order_type if intent.action == "entry" else self.cfg.exit_order_type
-        order_args = OrderArgs(token_id=intent.asset_id, price=float(intent.limit_price), size=float(intent.qty), side=intent.side.value)
+        price, size = sanitize_order_amounts(intent.side.value, float(intent.limit_price), float(intent.qty))
+        order_args = OrderArgs(token_id=intent.asset_id, price=price, size=size, side=intent.side.value)
         try:
             signed = self.client.create_order(order_args)
             resp = self.client.post_order(signed, order_type)
             oid = str(self._get(resp, "orderID", "") or self._get(resp, "id", ""))
             st = self._status(self._get(resp, "status", "NEW"))
-            print(f"[executor] place_order submitted: order_id={oid} {self._fmt_intent(intent)} status={st}", flush=True)
+            print(f"[executor] place_order submitted: order_id={oid} {self._fmt_intent(intent)} actual_price={price} actual_size={size} status={st}", flush=True)
             return oid, st, ""
         except Exception as exc:
             print(f"[executor] place_order FAILED: {self._fmt_intent(intent)} err={exc}", flush=True)
