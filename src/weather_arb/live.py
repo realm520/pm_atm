@@ -418,6 +418,7 @@ class LivePaperRunner:
             self.live_positions[event_id] = {
                 "side": live_side,
                 "entry_price": entry_ref_price,
+                "size": float(self.engine.cfg.base_trade_qty),
                 "hold_steps": 0,
                 "entry_ts": cur.get("ts") or row.get("ts"),
                 "entry_client_order_id": entry_client_order_id,
@@ -485,7 +486,7 @@ class LivePaperRunner:
                 # 入场已确认活跃/成交，清除 ID 避免后续 tick 重复查询
                 pos["entry_client_order_id"] = None
 
-        qty = float(self.engine.cfg.base_trade_qty)
+        qty = float(pos["size"]) if pos.get("size") is not None else float(self.engine.cfg.base_trade_qty)
         self.realized_pnl += gross * qty
         self.n_completed_trades += 1
         self._record_exit_trade(event_id, pos, gross, qty, cur.get("ts") or row.get("ts"))
@@ -574,6 +575,7 @@ class LivePaperRunner:
             self.live_positions[market_id] = {
                 "side": side,
                 "entry_price": entry_price,
+                "size": size,  # 实际持仓量，用于退出时下单
                 "hold_steps": 0,
                 "entry_ts": pd.Timestamp.now("UTC").isoformat(),
                 "entry_client_order_id": None,  # already filled, skip fill-check
