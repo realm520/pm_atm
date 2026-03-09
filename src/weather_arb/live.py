@@ -314,24 +314,29 @@ class LivePaperRunner:
         # Polymarket SDK rounds price to 2 decimal places (1-cent tick);
         # use rounded price for notional check to avoid false-pass (e.g. 0.013→0.01).
         effective_price = round(clamped_price, 2)
-        # min_notional bump 只适用于入场：退出必须按实际持仓量下单，不能超卖
-        if action == "entry" and effective_price * clamped_qty < self._MIN_ORDER_NOTIONAL:
-            bumped_qty = math.ceil(self._MIN_ORDER_NOTIONAL / effective_price)
-            size_key = "bestAskSize" if side == OrderSide.BUY else "bestBidSize"
-            raw_size = tick.get(size_key) if tick else None
-            available_size = float(raw_size) if raw_size is not None else None
-            if available_size is not None and available_size < bumped_qty:
-                self._append_alert(
-                    "warning",
-                    "execution_skip_insufficient_depth",
-                    f"skip {action} {event_id}: need qty={bumped_qty} but {size_key}={available_size} (price={clamped_price})",
+        # 入场专属校验：min_notional bump + order book 深度检查（FOK 必须全量可成交）
+        if action == "entry":
+            if effective_price * clamped_qty < self._MIN_ORDER_NOTIONAL:
+                clamped_qty = float(math.ceil(self._MIN_ORDER_NOTIONAL / effective_price))
+                self._append_event(
+                    "execution_qty_bumped",
+                    {"event_id": event_id, "original_qty": qty, "bumped_qty": clamped_qty, "price": clamped_price},
                 )
-                return None
-            clamped_qty = float(bumped_qty)
-            self._append_event(
-                "execution_qty_bumped",
-                {"action": action, "event_id": event_id, "original_qty": qty, "bumped_qty": clamped_qty, "price": clamped_price},
-            )
+            if tick is not None:
+                size_key = "bestAskSize" if side == OrderSide.BUY else "bestBidSize"
+                raw_size = tick.get(size_key)
+                available_size = float(raw_size) if raw_size is not None else None
+                if available_size is not None and available_size < clamped_qty:
+                    self._append_alert(
+                        "warning",
+                        "execution_skip_insufficient_depth",
+                        f"skip entry {event_id}: need qty={clamped_qty} but {size_key}={available_size} (price={clamped_price})",
+                    )
+                    self._append_event(
+                        "execution_skip",
+                        {"reason": "insufficient_depth", "event_id": event_id, "size_key": size_key, "available": available_size, "required": clamped_qty},
+                    )
+                    return None
 
         intent = ExecutionIntent(
             event_id=event_id,
