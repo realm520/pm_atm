@@ -65,6 +65,8 @@ class LiveRunnerConfig:
     entry_price_buffer: float = 0.003
     exit_price_buffer: float = 0.002
     entry_failed_cooldown_sec: float = 300.0  # FOK 失败后冷却时长，超时自动解锁
+    max_open_positions: int = 0       # 0 = 不限；runner 层持仓数硬上限
+    max_capital_deployed: float = 0.0  # 0 = 不限；runner 层已部署名义资金上限（USDC）
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_thread_id: int = 0
@@ -269,6 +271,18 @@ class LivePaperRunner:
         self._append_csv(Path(self.cfg.summary_csv), row)
         self._append_event("summary", row)
 
+    def _deployed_capital(self) -> float:
+        """估算当前所有开仓已部署的名义资金（USDC）。
+
+        - size 已知：entry_price * size
+        - size 未知（入场未确认）：entry_price * base_trade_qty（保守估算）
+        """
+        base_qty = float(self.engine.cfg.base_trade_qty)
+        return sum(
+            float(p.get("entry_price", 0.5)) * (float(p["size"]) if p.get("size") is not None else base_qty)
+            for p in self.live_positions.values()
+        )
+
     @staticmethod
     def _clamp_price(v: float) -> float:
         return min(0.99, max(0.01, float(v)))
@@ -408,6 +422,15 @@ class LivePaperRunner:
                 self._append_event("execution_skip", {"reason": "max_active_positions", "event_id": event_id, "max_active": max_active})
                 return
 
+            # Runner 层持仓数硬上限（不依赖策略配置）
+            if self.cfg.max_open_positions > 0 and len(self.live_positions) >= self.cfg.max_open_positions:
+                self._append_event(
+                    "execution_skip",
+                    {"reason": "runner_max_open_positions", "event_id": event_id,
+                     "open": len(self.live_positions), "limit": self.cfg.max_open_positions},
+                )
+                return
+
             if is_premarket_no:
                 # Long NO == short YES in execution layer
                 side = OrderSide.SELL
@@ -437,6 +460,20 @@ class LivePaperRunner:
                     entry_ref_price = self._no_price(event_id, 1.0 - market_prob)
                     entry_asset_id = no_asset_id
                     entry_tick = no_tick
+
+            # Runner 层资金上限检查：估算本次入场名义值 + 已部署资金
+            if self.cfg.max_capital_deployed > 0:
+                entry_qty = float(self.engine.cfg.base_trade_qty)
+                entry_notional = round(entry_ref_price * entry_qty, 4)
+                deployed = self._deployed_capital()
+                if deployed + entry_notional > self.cfg.max_capital_deployed:
+                    self._append_event(
+                        "execution_skip",
+                        {"reason": "runner_max_capital_deployed", "event_id": event_id,
+                         "deployed": round(deployed, 4), "entry_notional": entry_notional,
+                         "limit": self.cfg.max_capital_deployed},
+                    )
+                    return
 
             entry_client_order_id = self._submit_execution_intent(
                 event_id=event_id,
