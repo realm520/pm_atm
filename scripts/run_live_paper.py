@@ -83,6 +83,9 @@ def main() -> None:
     parser.add_argument("--poly-exec-api-key", default="", help="Live execution API key")
     parser.add_argument("--poly-account-name", default="", help="Account name in vault for live-sdk mode")
     parser.add_argument("--poly-account-vault", default="state/polymarket_accounts.json", help="Account vault path for live-sdk mode")
+    parser.add_argument("--liquidate-on-startup", action="store_true", help="On startup, immediately SELL all existing positions instead of bootstrapping them")
+    parser.add_argument("--max-open-positions", type=int, default=0, help="Runner-level hard cap on open positions (0 = unlimited)")
+    parser.add_argument("--max-capital-deployed", type=float, default=0.0, help="Runner-level max USDC deployed across all open positions (0 = unlimited)")
     args = parser.parse_args()
 
     strategy_cfg = _load_dataclass_config(args.strategy_config or None, StrategyConfig)
@@ -200,6 +203,8 @@ def main() -> None:
             enable_daily_loss_circuit_breaker=not args.no_daily_loss_circuit_breaker,
             max_runtime_errors=args.max_runtime_errors,
             alert_cooldown_sec=args.alert_cooldown_sec,
+            max_open_positions=args.max_open_positions,
+            max_capital_deployed=args.max_capital_deployed,
             telegram_bot_token=args.telegram_bot_token,
             telegram_chat_id=args.telegram_chat_id,
             telegram_thread_id=args.telegram_thread_id,
@@ -265,15 +270,19 @@ def main() -> None:
         # 把 NO token 映射注入 runner（runner 在 WS section 之前创建，此处补充）
         runner.event_no_asset_id.update({k: v[1] for k, v in market_yes_no.items()})
 
-        # Bootstrap existing positions from exchange at startup
+        # Bootstrap or liquidate existing positions from exchange at startup
         _executor = getattr(execution_service, "exchange", None)
         if _executor is not None and hasattr(_executor, "get_positions_snapshot"):
             print("[startup] querying existing open positions from exchange...", flush=True)
             try:
                 _snapshots = _executor.get_positions_snapshot(asset_ids=asset_ids)
-                runner.bootstrap_positions_from_snapshot(_snapshots, asset_to_market_id, market_yes_no)
+                if args.liquidate_on_startup:
+                    print("[startup] --liquidate-on-startup: closing all existing positions...", flush=True)
+                    runner.liquidate_positions_at_startup(_snapshots, asset_to_market_id, market_yes_no)
+                else:
+                    runner.bootstrap_positions_from_snapshot(_snapshots, asset_to_market_id, market_yes_no)
             except Exception as _exc:
-                print(f"[startup] position bootstrap failed (non-fatal): {_exc}", flush=True)
+                print(f"[startup] position snapshot failed (non-fatal): {_exc}", flush=True)
         else:
             print("[startup] position bootstrap skipped (paper mode or executor does not support get_positions_snapshot)", flush=True)
 

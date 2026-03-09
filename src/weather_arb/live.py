@@ -65,6 +65,8 @@ class LiveRunnerConfig:
     entry_price_buffer: float = 0.003
     exit_price_buffer: float = 0.002
     entry_failed_cooldown_sec: float = 300.0  # FOK 失败后冷却时长，超时自动解锁
+    max_open_positions: int = 0       # 0 = 不限；runner 层持仓数硬上限
+    max_capital_deployed: float = 0.0  # 0 = 不限；runner 层已部署名义资金上限（USDC）
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_thread_id: int = 0
@@ -269,6 +271,18 @@ class LivePaperRunner:
         self._append_csv(Path(self.cfg.summary_csv), row)
         self._append_event("summary", row)
 
+    def _deployed_capital(self) -> float:
+        """估算当前所有开仓已部署的名义资金（USDC）。
+
+        - size 已知：entry_price * size
+        - size 未知（入场未确认）：entry_price * base_trade_qty（保守估算）
+        """
+        base_qty = float(self.engine.cfg.base_trade_qty)
+        return sum(
+            float(p.get("entry_price", 0.5)) * (float(p["size"]) if p.get("size") is not None else base_qty)
+            for p in self.live_positions.values()
+        )
+
     @staticmethod
     def _clamp_price(v: float) -> float:
         return min(0.99, max(0.01, float(v)))
@@ -408,6 +422,15 @@ class LivePaperRunner:
                 self._append_event("execution_skip", {"reason": "max_active_positions", "event_id": event_id, "max_active": max_active})
                 return
 
+            # Runner 层持仓数硬上限（不依赖策略配置）
+            if self.cfg.max_open_positions > 0 and len(self.live_positions) >= self.cfg.max_open_positions:
+                self._append_event(
+                    "execution_skip",
+                    {"reason": "runner_max_open_positions", "event_id": event_id,
+                     "open": len(self.live_positions), "limit": self.cfg.max_open_positions},
+                )
+                return
+
             if is_premarket_no:
                 # Long NO == short YES in execution layer
                 side = OrderSide.SELL
@@ -437,6 +460,20 @@ class LivePaperRunner:
                     entry_ref_price = self._no_price(event_id, 1.0 - market_prob)
                     entry_asset_id = no_asset_id
                     entry_tick = no_tick
+
+            # Runner 层资金上限检查：估算本次入场名义值 + 已部署资金
+            if self.cfg.max_capital_deployed > 0:
+                entry_qty = float(self.engine.cfg.base_trade_qty)
+                entry_notional = round(entry_ref_price * entry_qty, 4)
+                deployed = self._deployed_capital()
+                if deployed + entry_notional > self.cfg.max_capital_deployed:
+                    self._append_event(
+                        "execution_skip",
+                        {"reason": "runner_max_capital_deployed", "event_id": event_id,
+                         "deployed": round(deployed, 4), "entry_notional": entry_notional,
+                         "limit": self.cfg.max_capital_deployed},
+                    )
+                    return
 
             entry_client_order_id = self._submit_execution_intent(
                 event_id=event_id,
@@ -673,6 +710,90 @@ class LivePaperRunner:
             )
         else:
             self._safe_print("[live][startup] no existing positions found, starting fresh")
+
+    def liquidate_positions_at_startup(
+        self,
+        snapshots: list[dict[str, Any]],
+        asset_to_market_id: dict[str, str],
+        market_yes_no: dict[str, tuple[str, str]],
+    ) -> int:
+        """Immediately submit SELL orders for all open positions at startup.
+
+        For each position found in *snapshots*, submits a limit SELL order at
+        an aggressive price (cur_price - exit_price_buffer) to close it.
+        Positions with notional below MIN_ORDER_NOTIONAL are skipped (tiny).
+
+        Returns the number of liquidation orders submitted.
+        """
+        if self.execution_service is None:
+            self._safe_print("[live][startup] liquidate skipped: no execution_service")
+            return 0
+
+        no_asset_ids: set[str] = {v[1] for v in market_yes_no.values()}
+        n_submitted = 0
+        ts = pd.Timestamp.now("UTC").isoformat()
+
+        for snap in snapshots:
+            asset_id = str(snap.get("asset_id", ""))
+            size = float(snap.get("size") or 0)
+            cur_price = snap.get("cur_price")
+
+            market_id = asset_to_market_id.get(asset_id)
+            if not market_id or size <= 0:
+                continue
+
+            is_no_token = asset_id in no_asset_ids
+            ref_price = float(cur_price) if cur_price is not None else 0.5
+
+            # Aggressive sell price: bid - buffer, clamped to [0.01, 0.99]
+            limit_price = self._clamp_price(ref_price - self.cfg.exit_price_buffer)
+            effective_price = round(limit_price, 2)
+            notional = round(effective_price * size, 4)
+
+            if notional < self._MIN_ORDER_NOTIONAL:
+                self._safe_print(
+                    f"[live][startup] skip liquidate {market_id}: notional ${notional:.4f} < min ${self._MIN_ORDER_NOTIONAL}"
+                    f" (qty={size} price={effective_price})"
+                )
+                self._append_event(
+                    "liquidate_skip",
+                    {"reason": "below_min_notional", "market_id": market_id, "notional": notional, "qty": size},
+                )
+                continue
+
+            side_label = "SHORT_YES" if is_no_token else "LONG_YES"
+            self._safe_print(
+                f"[live][startup] liquidating {side_label}: market={market_id} "
+                f"qty={size} price={effective_price} notional=${notional:.2f}"
+            )
+            self._append_event(
+                "liquidate_submit",
+                {
+                    "market_id": market_id,
+                    "asset_id": asset_id,
+                    "side": side_label,
+                    "qty": size,
+                    "limit_price": effective_price,
+                    "notional": notional,
+                },
+            )
+            self._submit_execution_intent(
+                event_id=market_id,
+                side=OrderSide.SELL,
+                qty=size,
+                limit_price=limit_price,
+                action="liquidate",
+                ts=ts,
+                asset_id=asset_id,
+                tick=None,
+            )
+            n_submitted += 1
+
+        if n_submitted:
+            self._safe_print(f"[live][startup] submitted {n_submitted} liquidation order(s)")
+        else:
+            self._safe_print("[live][startup] no positions to liquidate")
+        return n_submitted
 
     async def on_tick(self, tick: dict[str, Any]) -> None:
         if self._halted:
