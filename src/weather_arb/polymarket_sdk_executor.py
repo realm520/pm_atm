@@ -8,6 +8,10 @@ from .orders import ExecutionIntent, Fill, OrderStatus
 from .polymarket_account import PolymarketAccount
 
 
+_POSITION_SIZE_KEYS = ("size", "position", "balance", "netPosition")
+_POSITION_PRICE_KEYS = ("avg_price", "avgPrice", "average_price", "entry_price")
+
+
 @dataclass(frozen=True)
 class PolymarketSdkExecutorConfig:
     order_type: str = "GTC"
@@ -96,6 +100,43 @@ class PolymarketSdkExecutor(ExchangeExecutionPort):
             return True
         except Exception:
             return False
+
+    def get_positions_snapshot(self, asset_ids: list[str] | None = None) -> list[dict[str, Any]]:
+        """Return open positions from Polymarket CLOB API.
+
+        Returns a list of dicts with keys: asset_id, size, avg_price (or None).
+        Filters to *asset_ids* when provided; silently returns [] on any error.
+        """
+        try:
+            raw = self.client.get_positions() or []
+        except Exception as exc:
+            print(f"[executor] get_positions_snapshot failed: {exc}", flush=True)
+            return []
+
+        asset_set = set(asset_ids) if asset_ids else None
+        result: list[dict[str, Any]] = []
+        for p in raw if isinstance(raw, list) else []:
+            aid = (
+                self._get(p, "asset_id")
+                or self._get(p, "assetId")
+                or self._get(p, "token_id")
+                or self._get(p, "tokenId")
+            )
+            if not aid:
+                continue
+            if asset_set and str(aid) not in asset_set:
+                continue
+            size_raw = next((self._get(p, k) for k in _POSITION_SIZE_KEYS if self._get(p, k) is not None), None)
+            size = float(size_raw) if size_raw is not None else 0.0
+            if size <= 0:
+                continue
+            price_raw = next((self._get(p, k) for k in _POSITION_PRICE_KEYS if self._get(p, k) is not None), None)
+            result.append({
+                "asset_id": str(aid),
+                "size": size,
+                "avg_price": float(price_raw) if price_raw is not None else None,
+            })
+        return result
 
     def get_order_update(self, exchange_order_id: str) -> tuple[OrderStatus, float, float | None, list[Fill], str]:
         try:

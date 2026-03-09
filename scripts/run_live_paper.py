@@ -263,6 +263,18 @@ def main() -> None:
         # 把 NO token 映射注入 runner（runner 在 WS section 之前创建，此处补充）
         runner.event_no_asset_id.update({k: v[1] for k, v in market_yes_no.items()})
 
+        # Bootstrap existing positions from exchange at startup
+        _executor = getattr(execution_service, "exchange", None) if execution_service else None
+        if _executor is not None and hasattr(_executor, "get_positions_snapshot"):
+            print("[startup] querying existing open positions from exchange...", flush=True)
+            try:
+                _snapshots = _executor.get_positions_snapshot(asset_ids=asset_ids)
+                runner.bootstrap_positions_from_snapshot(_snapshots, asset_to_market_id, market_yes_no)
+            except Exception as _exc:
+                print(f"[startup] position bootstrap failed (non-fatal): {_exc}", flush=True)
+        else:
+            print("[startup] position bootstrap skipped (paper mode or executor does not support get_positions_snapshot)", flush=True)
+
         ws_url = args.ws_url or "wss://ws-subscriptions-clob.polymarket.com/ws/market"
         subscribe_message = json.loads(args.subscribe_json) if args.subscribe_json else None
         ws_streamer = PolymarketWSStreamer(

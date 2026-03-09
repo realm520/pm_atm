@@ -514,6 +514,64 @@ class LivePaperRunner:
         )
         self.live_positions.pop(event_id, None)
 
+    def bootstrap_positions_from_snapshot(
+        self,
+        snapshots: list[dict[str, Any]],
+        asset_to_market_id: dict[str, str],
+        market_yes_no: dict[str, tuple[str, str]],
+    ) -> None:
+        """Pre-populate live_positions from broker snapshot at startup.
+
+        Call this after market metadata is resolved and before the WS/poll loop starts.
+        Any asset_id found in *snapshots* that maps to a known market is loaded into
+        live_positions with hold_steps=0 (entry already confirmed filled).
+        """
+        no_asset_to_market = {v[1]: k for k, v in market_yes_no.items()}
+
+        for snap in snapshots:
+            asset_id = str(snap.get("asset_id", ""))
+            size = float(snap.get("size") or 0)
+            avg_price = snap.get("avg_price")
+
+            market_id = asset_to_market_id.get(asset_id)
+            if not market_id or size <= 0:
+                continue
+
+            if market_id in self.live_positions:
+                continue  # already loaded (shouldn't happen at startup)
+
+            side = "SHORT_YES" if asset_id in no_asset_to_market else "LONG_YES"
+            entry_price = float(avg_price) if avg_price is not None else 0.5
+
+            self.live_positions[market_id] = {
+                "side": side,
+                "entry_price": entry_price,
+                "hold_steps": 0,
+                "entry_ts": pd.Timestamp.now("UTC").isoformat(),
+                "entry_client_order_id": None,  # already filled, skip fill-check
+            }
+            self._append_event(
+                "position_bootstrapped",
+                {
+                    "market_id": market_id,
+                    "asset_id": asset_id,
+                    "side": side,
+                    "entry_price": entry_price,
+                    "size": size,
+                },
+            )
+            self._safe_print(
+                f"[live][startup] bootstrapped position: market={market_id} side={side} "
+                f"entry_price={entry_price:.4f} size={size}"
+            )
+
+        if self.live_positions:
+            self._safe_print(
+                f"[live][startup] {len(self.live_positions)} existing position(s) loaded, strategy continues from here"
+            )
+        else:
+            self._safe_print("[live][startup] no existing positions found, starting fresh")
+
     async def on_tick(self, tick: dict[str, Any]) -> None:
         if self._halted:
             raise CircuitBreakerTriggered("already_halted")
