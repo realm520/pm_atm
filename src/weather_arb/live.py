@@ -307,7 +307,8 @@ class LivePaperRunner:
 
         clamped_price = self._clamp_price(float(limit_price))
         clamped_qty = float(max(0.001, qty))
-        if clamped_price * clamped_qty < self._MIN_ORDER_NOTIONAL:
+        # min_notional bump 只适用于入场：退出必须按实际持仓量下单，不能超卖
+        if action == "entry" and clamped_price * clamped_qty < self._MIN_ORDER_NOTIONAL:
             bumped_qty = math.ceil(self._MIN_ORDER_NOTIONAL / clamped_price)
             size_key = "bestAskSize" if side == OrderSide.BUY else "bestBidSize"
             raw_size = tick.get(size_key) if tick else None
