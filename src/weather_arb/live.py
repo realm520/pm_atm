@@ -509,7 +509,9 @@ class LivePaperRunner:
             entry_price = float(pos.get("entry_price", 0.5))
             side = pos.get("side", "LONG_YES")
             if side in ("SHORT_YES", "LONG_NO"):
-                cur_price = self._no_price(event_id, 1.0 - self.event_latest_price.get(event_id, 0.5))
+                # 无实时 tick 时 fallback 到 entry_price，避免用默认 0.5 产生虚假亏损
+                no_fallback = 1.0 - self.event_latest_price[event_id] if event_id in self.event_latest_price else entry_price
+                cur_price = self._no_price(event_id, no_fallback)
             else:
                 cur_price = self.event_latest_price.get(event_id, entry_price)
             unrealized += (cur_price - entry_price) * qty
