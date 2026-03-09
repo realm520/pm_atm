@@ -3,13 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import requests
+
 from .execution_service import ExchangeExecutionPort
 from .orders import ExecutionIntent, Fill, OrderStatus
 from .polymarket_account import PolymarketAccount
-
-
-_POSITION_SIZE_KEYS = ("size", "position", "balance", "netPosition")
-_POSITION_PRICE_KEYS = ("avg_price", "avgPrice", "average_price", "entry_price")
 
 
 @dataclass(frozen=True)
@@ -102,39 +100,39 @@ class PolymarketSdkExecutor(ExchangeExecutionPort):
             return False
 
     def get_positions_snapshot(self, asset_ids: list[str] | None = None) -> list[dict[str, Any]]:
-        """Return open positions from Polymarket CLOB API.
+        """Return open positions from Polymarket data API.
 
         Returns a list of dicts with keys: asset_id, size, avg_price (or None).
         Filters to *asset_ids* when provided; silently returns [] on any error.
         """
         try:
-            raw = self.client.get_positions() or []
+            resp = requests.get(
+                "https://data-api.polymarket.com/positions",
+                params={"user": self.account.funder, "sizeThreshold": 0.01, "limit": 500},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            raw: list[dict] = resp.json() or []
         except Exception as exc:
             print(f"[executor] get_positions_snapshot failed: {exc}", flush=True)
             return []
 
         asset_set = set(asset_ids) if asset_ids else None
         result: list[dict[str, Any]] = []
-        for p in raw if isinstance(raw, list) else []:
-            aid = (
-                self._get(p, "asset_id")
-                or self._get(p, "assetId")
-                or self._get(p, "token_id")
-                or self._get(p, "tokenId")
-            )
+        for p in raw:
+            aid = str(p.get("asset", "") or "")
             if not aid:
                 continue
-            if asset_set and str(aid) not in asset_set:
+            if asset_set and aid not in asset_set:
                 continue
-            size_raw = next((v for k in _POSITION_SIZE_KEYS if (v := self._get(p, k)) is not None), None)
-            size = float(size_raw) if size_raw is not None else 0.0
+            size = float(p.get("size", 0) or 0)
             if size <= 0:
                 continue
-            price_raw = next((v for k in _POSITION_PRICE_KEYS if (v := self._get(p, k)) is not None), None)
+            avg_price_raw = p.get("avgPrice")
             result.append({
-                "asset_id": str(aid),
+                "asset_id": aid,
                 "size": size,
-                "avg_price": float(price_raw) if price_raw is not None else None,
+                "avg_price": float(avg_price_raw) if avg_price_raw is not None else None,
             })
         return result
 
