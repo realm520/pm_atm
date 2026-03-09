@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import time
 from typing import Any, Protocol
 import traceback
 
@@ -63,6 +64,7 @@ class LiveRunnerConfig:
     alert_cooldown_sec: float = 120.0
     entry_price_buffer: float = 0.003
     exit_price_buffer: float = 0.002
+    entry_failed_cooldown_sec: float = 300.0  # FOK 失败后冷却时长，超时自动解锁
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_thread_id: int = 0
@@ -104,6 +106,8 @@ class LivePaperRunner:
         self.event_latest_price: dict[str, float] = {}
         self.event_midprice: dict[str, float] = {}  # (bestBid+bestAsk)/2，WS 每 tick 更新
         self.execution_submitted_keys: set[str] = set()
+        # FOK 入场失败后的冷却表：信号归零或超时后自动解锁
+        self.entry_failed_cooldown: dict[str, float] = {}  # event_id -> monotonic 失败时间
         self._csv_headers_written: set[str] = set()
         self.tick_count = 0
         self._raw_tick_attempts = 0
@@ -334,6 +338,7 @@ class LivePaperRunner:
             limit_price=clamped_price,
             timeout_sec=15.0,
             client_order_id=f"live-{key}",
+            action=action,
         )
         self.execution_service.submit(intent)
         self.execution_submitted_keys.add(key)
@@ -376,7 +381,16 @@ class LivePaperRunner:
         pos = self.live_positions.get(event_id)
         if pos is None:
             if signal == 0:
+                # 信号归零，提前清除冷却
+                self.entry_failed_cooldown.pop(event_id, None)
                 return
+
+            fail_ts = self.entry_failed_cooldown.get(event_id)
+            if fail_ts is not None:
+                if time.monotonic() - fail_ts < self.cfg.entry_failed_cooldown_sec:
+                    return
+                # 冷却已超时，允许重试
+                del self.entry_failed_cooldown[event_id]
 
             if not is_premarket_no and (z is None or not math.isfinite(float(z))):
                 return
@@ -493,6 +507,7 @@ class LivePaperRunner:
                         f"[live][warning] skip exit {event_id}: entry order {entry_coid} status={entry_order.status}, no tokens to sell"
                     )
                     self.live_positions.pop(event_id, None)
+                    self.entry_failed_cooldown[event_id] = time.monotonic()
                     return
                 # 入场已确认活跃/成交，从 filled_qty 更新实际持仓量
                 pos["entry_client_order_id"] = None

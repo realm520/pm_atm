@@ -12,7 +12,8 @@ from .polymarket_account import PolymarketAccount
 
 @dataclass(frozen=True)
 class PolymarketSdkExecutorConfig:
-    order_type: str = "GTC"
+    entry_order_type: str = "FOK"  # 入场：全成交或立即取消，不产生挂单
+    exit_order_type: str = "FAK"   # 退出：部分成交也可，剩余自动取消
 
 
 class PolymarketSdkExecutor(ExchangeExecutionPort):
@@ -80,10 +81,11 @@ class PolymarketSdkExecutor(ExchangeExecutionPort):
     def place_order(self, intent: ExecutionIntent) -> tuple[str, OrderStatus, str]:
         from py_clob_client.clob_types import OrderArgs
 
+        order_type = self.cfg.entry_order_type if intent.action == "entry" else self.cfg.exit_order_type
         order_args = OrderArgs(token_id=intent.asset_id, price=float(intent.limit_price), size=float(intent.qty), side=intent.side.value)
         try:
             signed = self.client.create_order(order_args)
-            resp = self.client.post_order(signed, self.cfg.order_type)
+            resp = self.client.post_order(signed, order_type)
             oid = str(self._get(resp, "orderID", "") or self._get(resp, "id", ""))
             st = self._status(self._get(resp, "status", "NEW"))
             print(f"[executor] place_order submitted: order_id={oid} {self._fmt_intent(intent)} status={st}", flush=True)

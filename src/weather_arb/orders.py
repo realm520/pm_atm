@@ -48,6 +48,7 @@ class ExecutionIntent:
     limit_price: float
     timeout_sec: float = 15.0
     client_order_id: str = ""
+    action: str = ""  # "entry" | "exit"
 
 
 @dataclass(frozen=True)
