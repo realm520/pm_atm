@@ -98,6 +98,9 @@ class LivePaperRunner:
         self.event_no_asset_id: dict[str, str] = {k: v[1] for k, v in (market_yes_no or {}).items()}
         self.event_no_latest_tick: dict[str, dict] = {}
         self.live_positions: dict[str, dict[str, Any]] = {}
+        self.realized_pnl: float = 0.0
+        self.n_completed_trades: int = 0
+        self.event_latest_price: dict[str, float] = {}
         self.execution_submitted_keys: set[str] = set()
         self.tick_count = 0
         self._raw_tick_attempts = 0
@@ -141,6 +144,7 @@ class LivePaperRunner:
 
         if asset_id:
             self.event_latest_asset_id[event_id_str] = str(asset_id)
+        self.event_latest_price[event_id_str] = float(market_prob)
 
         market_question = tick.get("market_question") or tick.get("question") or tick.get("title") or ""
 
@@ -274,7 +278,7 @@ class LivePaperRunner:
 
     @staticmethod
     def _clamp_price(v: float) -> float:
-        return min(0.999, max(0.001, float(v)))
+        return min(0.99, max(0.01, float(v)))
 
     def _limit_price_from_tick(self, tick: dict[str, Any], *, side: OrderSide, action: str, fallback: float) -> float:
         best_bid = tick.get("bestBid") or tick.get("best_bid")
@@ -502,10 +506,14 @@ class LivePaperRunner:
                 # 入场已确认活跃/成交，清除 ID 避免后续 tick 重复查询
                 pos["entry_client_order_id"] = None
 
+        qty = float(self.engine.cfg.base_trade_qty)
+        self.realized_pnl += gross * qty
+        self.n_completed_trades += 1
+        self._record_exit_trade(event_id, pos, gross, qty, cur.get("ts") or row.get("ts"))
         self._submit_execution_intent(
             event_id=event_id,
             side=exit_side,
-            qty=float(self.engine.cfg.base_trade_qty),
+            qty=qty,
             limit_price=self._limit_price_from_tick(exit_tick, side=exit_side, action="exit", fallback=market_prob),
             action="exit",
             ts=cur.get("ts") or row.get("ts"),
@@ -513,6 +521,41 @@ class LivePaperRunner:
             tick=exit_tick,
         )
         self.live_positions.pop(event_id, None)
+
+    def _compute_live_pnl(self) -> tuple[float, float]:
+        """返回 (realized_pnl, unrealized_pnl)，基于真实持仓。"""
+        qty = float(self.engine.cfg.base_trade_qty)
+        unrealized = 0.0
+        for event_id, pos in self.live_positions.items():
+            entry_price = float(pos.get("entry_price", 0.5))
+            side = pos.get("side", "LONG_YES")
+            if side in ("SHORT_YES", "LONG_NO"):
+                cur_price = self._no_price(event_id, 1.0 - self.event_latest_price.get(event_id, 0.5))
+            else:
+                cur_price = self.event_latest_price.get(event_id, entry_price)
+            unrealized += (cur_price - entry_price) * qty
+        return self.realized_pnl, unrealized
+
+    def _record_exit_trade(self, event_id: str, pos: dict, gross: float, qty: float, exit_ts: Any) -> None:
+        key = f"{event_id}|{pos.get('entry_ts')}|{exit_ts}|{pos.get('side')}"
+        if key in self.seen_trade_keys:
+            return
+        self.seen_trade_keys.add(key)
+        trade_row = {
+            "event_id": event_id,
+            "side": pos.get("side"),
+            "entry_ts": pos.get("entry_ts"),
+            "exit_ts": exit_ts,
+            "entry_price": pos.get("entry_price"),
+            "gross": gross,
+            "qty": qty,
+            "pnl": gross * qty,
+        }
+        out_path = Path(self.cfg.out_csv)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not out_path.exists()
+        pd.DataFrame([trade_row]).to_csv(out_path, mode="a", header=write_header, index=False)
+        self._append_event("trade", trade_row)
 
     def bootstrap_positions_from_snapshot(
         self,
@@ -596,12 +639,8 @@ class LivePaperRunner:
             df = pd.DataFrame(self.rows)
             self._process_execution_signals(df, row, tick)
 
-            result = self.engine.run(df)
-            summary = result["summary"]
-            n_new = self._dump_new_trades(result["trades"])
-            self._append_summary_row(row["event_id"], summary, n_new)
-
-            total_pnl = float(summary.get("total_pnl", 0.0) or 0.0)
+            realized, unrealized = self._compute_live_pnl()
+            total_pnl = realized + unrealized
             if total_pnl <= self.cfg.hard_daily_loss_limit:
                 self._trigger_circuit_breaker(
                     "daily_loss_limit",
@@ -610,10 +649,24 @@ class LivePaperRunner:
 
             self._check_execution_health()
 
+            n_trades = self.n_completed_trades
+            avg_pnl = self.realized_pnl / n_trades if n_trades else 0.0
+            self._append_summary_row(
+                row["event_id"],
+                {
+                    "n_trades": n_trades,
+                    "open_positions": len(self.live_positions),
+                    "total_pnl": total_pnl,
+                    "avg_pnl": avg_pnl,
+                    "win_rate": 0.0,
+                },
+                0,
+            )
+
             self._safe_print(
-                f"[live] ticks={self.tick_count} trades={summary.get('n_trades', 0)} "
-                f"new_trades={n_new} total_pnl={summary.get('total_pnl', 0.0):.4f} "
-                f"open_positions={summary.get('open_positions', 0)}"
+                f"[live] ticks={self.tick_count} "
+                f"realized={realized:.4f} unrealized={unrealized:.4f} total_pnl={total_pnl:.4f} "
+                f"open_positions={len(self.live_positions)}"
             )
         except CircuitBreakerTriggered:
             raise
