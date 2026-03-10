@@ -4,9 +4,36 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from typing import Any
 
 from weather_arb.polymarket_account import PolymarketAccountManager
 from weather_arb.polymarket_direct_trader import DirectOrderRequest, PolymarketDirectTrader
+
+
+def _print_table(rows: list[dict[str, Any]], title: str = "") -> None:
+    """简单等宽表格输出。"""
+    if not rows:
+        print(f"  {title}: （无数据）")
+        return
+    cols = list(rows[0].keys())
+    widths = {c: max(len(str(c)), max(len(str(r[c])) for r in rows)) for c in cols}
+    sep = "  ".join("-" * widths[c] for c in cols)
+    header = "  ".join(str(c).ljust(widths[c]) for c in cols)
+    if title:
+        print(f"\n=== {title} ===")
+    print(header)
+    print(sep)
+    for r in rows:
+        print("  ".join(str(r[c]).ljust(widths[c]) for c in cols))
+
+
+def _output_pnl(rows: list[dict[str, Any]], summary: dict[str, Any], fmt: str, title: str, summary_line: str) -> None:
+    """统一的 P&L 格式化输出（json 或 table）。"""
+    if fmt == "json":
+        print(json.dumps({"data": rows, "summary": summary}, ensure_ascii=False, indent=2))
+    else:
+        _print_table(rows, title=title)
+        print(f"\n  汇总：{summary_line}")
 
 
 def main() -> None:
@@ -58,6 +85,13 @@ def main() -> None:
     p_positions.add_argument("--name", required=True)
     p_positions.add_argument("--vault", default="state/polymarket_accounts.json")
     p_positions.add_argument("--open-only", action="store_true", help="只显示净持仓 > 0 的标的")
+    p_positions.add_argument("--format", choices=["json", "table"], default="table")
+
+    p_pnl = sub.add_parser("pnl-from-trades", help="从 CLOB 成交历史重建完整盈亏（含已平仓）")
+    p_pnl.add_argument("--name", required=True)
+    p_pnl.add_argument("--vault", default="state/polymarket_accounts.json")
+    p_pnl.add_argument("--open-only", action="store_true", help="只显示净持仓 > 0 的标的")
+    p_pnl.add_argument("--format", choices=["json", "table"], default="table")
 
     p_close = sub.add_parser("close-all", help="平掉所有净多仓位（发市价 SELL 单）")
     p_close.add_argument("--name", required=True)
@@ -193,31 +227,71 @@ def main() -> None:
         positions = trader.get_positions_pnl(
             account=account, private_key=private_key, open_only=args.open_only
         )
-        out = [
+        rows = [
             {
-                "token_id": p.token_id,
-                "market": p.market,
-                "net_qty": round(p.net_qty, 4),
+                "token_id": p.token_id[:16] + "…",
+                "market": p.market[:40],
+                "net_qty": round(p.net_qty, 2),
                 "avg_cost": round(p.avg_cost, 4),
-                "current_price": round(p.current_price, 4),
-                "unrealized_pnl": round(p.unrealized_pnl, 4),
-                "realized_pnl": round(p.realized_pnl, 4),
-                "total_bought": round(p.total_bought, 4),
-                "total_sold": round(p.total_sold, 4),
+                "cur_price": round(p.current_price, 4),
+                "unreal_pnl": round(p.unrealized_pnl, 4),
+                "real_pnl": round(p.realized_pnl, 4),
+                "total_pnl": round(p.unrealized_pnl + p.realized_pnl, 4),
             }
             for p in positions
         ]
         total_unrealized = sum(p.unrealized_pnl for p in positions)
         total_realized = sum(p.realized_pnl for p in positions)
-        result = {
-            "positions": out,
-            "summary": {
-                "total_unrealized_pnl": round(total_unrealized, 4),
-                "total_realized_pnl": round(total_realized, 4),
-                "total_pnl": round(total_unrealized + total_realized, 4),
-            },
+        summary = {
+            "n_positions": len(positions),
+            "total_unrealized_pnl": round(total_unrealized, 4),
+            "total_realized_pnl": round(total_realized, 4),
+            "total_pnl": round(total_unrealized + total_realized, 4),
         }
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        _output_pnl(
+            rows, summary, args.format,
+            title="当前持仓 P&L（data-api）",
+            summary_line=(f"持仓数={summary['n_positions']}  "
+                          f"未实现={summary['total_unrealized_pnl']:+.4f}  "
+                          f"已实现={summary['total_realized_pnl']:+.4f}  "
+                          f"合计={summary['total_pnl']:+.4f} USDC"),
+        )
+        return
+
+    if args.cmd == "pnl-from-trades":
+        summaries = trader.compute_pnl_from_trades(
+            account=account, private_key=private_key, open_only=args.open_only
+        )
+        rows = [
+            {
+                "token_id": s.token_id[:16] + "…",
+                "market": s.market[:30],
+                "net_qty": round(s.net_qty, 2),
+                "avg_cost": round(s.avg_cost, 4),
+                "cur_price": round(s.current_price, 4),
+                "real_pnl": round(s.realized_pnl, 4),
+                "unreal_pnl": round(s.unrealized_pnl, 4),
+                "total_pnl": round(s.realized_pnl + s.unrealized_pnl, 4),
+                "n_trades": s.n_trades,
+            }
+            for s in summaries
+        ]
+        total_realized = sum(s.realized_pnl for s in summaries)
+        total_unrealized = sum(s.unrealized_pnl for s in summaries)
+        summary = {
+            "n_assets": len(summaries),
+            "total_realized_pnl": round(total_realized, 4),
+            "total_unrealized_pnl": round(total_unrealized, 4),
+            "total_pnl": round(total_realized + total_unrealized, 4),
+        }
+        _output_pnl(
+            rows, summary, args.format,
+            title="历史成交重建 P&L（CLOB trades）",
+            summary_line=(f"标的数={summary['n_assets']}  "
+                          f"已实现={summary['total_realized_pnl']:+.4f}  "
+                          f"未实现={summary['total_unrealized_pnl']:+.4f}  "
+                          f"合计={summary['total_pnl']:+.4f} USDC"),
+        )
         return
 
 
