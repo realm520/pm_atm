@@ -68,11 +68,13 @@ class ExecutionService:
                 self._submit_ts[order.order_id] = pd.Timestamp.now("UTC")
             if status == OrderStatus.REJECTED:
                 self._consecutive_rejected += 1
+                print(f"[exec] consecutive_rejected={self._consecutive_rejected} (submit REJECTED) order={order.order_id} reason={reject_reason!r}", flush=True)
             else:
                 self._consecutive_rejected = 0
             return order
         except Exception as exc:
             self._consecutive_rejected += 1
+            print(f"[exec] consecutive_rejected={self._consecutive_rejected} (submit exception) order={order.order_id} err={exc}", flush=True)
             return self.store.transition_order(order.order_id, OrderStatus.FAILED, reject_reason=str(exc))
 
     def refresh(self, order: OrderRecord) -> OrderRecord:
@@ -109,8 +111,10 @@ class ExecutionService:
         )
         if status == OrderStatus.REJECTED:
             self._consecutive_rejected += 1
+            print(f"[exec] consecutive_rejected={self._consecutive_rejected} (refresh REJECTED) order={order.order_id} reason={reject_reason!r}", flush=True)
         elif status in {OrderStatus.FILLED, OrderStatus.CANCELED, OrderStatus.NEW, OrderStatus.PARTIALLY_FILLED}:
-            self._consecutive_rejected = 0
+            if self._consecutive_rejected > 0:
+                self._consecutive_rejected = 0
         return order
 
     def get_order_by_client_id(self, client_order_id: str) -> OrderRecord | None:
@@ -125,10 +129,13 @@ class ExecutionService:
     def risk_flags(self, minutes: int = 5) -> dict[str, bool | float | int]:
         s = self.store.stats_last_minutes(minutes)
         reject_rate = float(s["reject_rate"])
+        hard_stop = reject_rate >= self.cfg.max_reject_rate_stop or self._consecutive_rejected >= self.cfg.max_consecutive_rejected_stop
+        if hard_stop:
+            print(f"[exec] hard_stop triggered: reject_rate={reject_rate:.2%} consecutive_rejected={self._consecutive_rejected}", flush=True)
         return {
             "reject_rate": reject_rate,
             "reject_warn": reject_rate >= self.cfg.max_reject_rate_warn,
             "reject_crit": reject_rate >= self.cfg.max_reject_rate_crit,
-            "hard_stop": reject_rate >= self.cfg.max_reject_rate_stop or self._consecutive_rejected >= self.cfg.max_consecutive_rejected_stop,
+            "hard_stop": hard_stop,
             "consecutive_rejected": self._consecutive_rejected,
         }
