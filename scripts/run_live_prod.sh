@@ -14,7 +14,7 @@ TG_THREAD_ID_DEFAULT="52"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/run_live_prod.sh <check|preflight|smoke|start|stop|status|health>
+Usage: scripts/run_live_prod.sh <check|preflight|smoke|start|stop|status|health|watch>
 
 Environment variables required for start/check:
   POLY_PRIVATE_KEY     Private key for official SDK live execution
@@ -184,6 +184,76 @@ status_live() {
   fi
 }
 
+watch_live() {
+  # tmux 守护循环：在前台直接运行 Python，自然等待退出后重启。
+  # kill-switch 文件（$STOP_FILE）存在时终止循环。
+  # 用法：在 tmux 窗口内执行 scripts/run_live_prod.sh watch
+  check_env
+  preflight_live
+
+  local restart_delay="${RESTART_DELAY_SEC:-30}"
+  local watchdog_log="logs/live_watchdog.log"
+  local tg_chat_id="${TG_CHAT_ID:-$TG_CHAT_ID_DEFAULT}"
+  local tg_thread_id="${TG_THREAD_ID:-$TG_THREAD_ID_DEFAULT}"
+  local max_seconds="${LIVE_MAX_SECONDS:-0}"
+  local run_count=0
+  ensure_logs_dir
+  rm -f "$STOP_FILE"
+
+  echo "[watchdog] started at $(date -u +%Y-%m-%dT%H:%M:%SZ) restart_delay=${restart_delay}s" | tee -a "$watchdog_log"
+
+  while true; do
+    if [[ -f "$STOP_FILE" ]]; then
+      echo "[watchdog] stop file found, exiting" | tee -a "$watchdog_log"
+      break
+    fi
+
+    run_count=$((run_count + 1))
+    echo "[watchdog] run #${run_count} starting at $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$watchdog_log"
+
+    # 前台运行，日志追加到同一文件
+    uv run python -u scripts/run_live_paper.py \
+      --mode ws \
+      --execution-mode live-sdk \
+      --orders-db state/orders.live.db \
+      --poly-account-name "${POLY_ACCOUNT_NAME}" \
+      --poly-account-vault "${POLY_ACCOUNT_VAULT:-state/polymarket_accounts.json}" \
+      --weather-config config/weather_events.generated.json \
+      --all-from-weather-config \
+      --strategy-config config/strategy.prod.conservative.json \
+      --risk-config config/risk.prod.conservative.json \
+      --engine-config config/engine.prod.conservative.json \
+      --hard-daily-loss-limit "${HARD_DAILY_LOSS_LIMIT:--4}" \
+      --max-runtime-errors 50 \
+      --kill-switch-path "$STOP_FILE" \
+      --alerts-jsonl logs/live_alerts_ws_all_6h.jsonl \
+      --events-jsonl logs/live_events_ws_all_6h.jsonl \
+      --error-log logs/live_errors_ws_all_6h.log \
+      --run-meta logs/live_run_meta_ws_all_6h.json \
+      --summary-csv outputs/live_summary_ws_all_6h.csv \
+      --out-csv outputs/live_trades_ws_all_6h.csv \
+      --ws-raw-log logs/live_ws_raw_all_6h.jsonl \
+      --telegram-bot-token "${TG_BOT_TOKEN}" \
+      --telegram-chat-id "$tg_chat_id" \
+      --telegram-thread-id "$tg_thread_id" \
+      --max-seconds "$max_seconds" \
+      2>&1 | tee -a logs/live_prod.out.log
+    local exit_code=${PIPESTATUS[0]}
+
+    echo "[watchdog] run #${run_count} exited code=${exit_code} at $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$watchdog_log"
+
+    if [[ -f "$STOP_FILE" ]]; then
+      echo "[watchdog] stop file found after exit, not restarting" | tee -a "$watchdog_log"
+      break
+    fi
+
+    echo "[watchdog] restarting in ${restart_delay}s... (Ctrl+C 或 touch $STOP_FILE 停止)" | tee -a "$watchdog_log"
+    sleep "$restart_delay"
+  done
+
+  echo "[watchdog] stopped at $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$watchdog_log"
+}
+
 cmd="${1:-}"
 case "$cmd" in
   check) check_env ;;
@@ -193,5 +263,6 @@ case "$cmd" in
   start) start_live ;;
   stop) stop_live ;;
   status) status_live ;;
+  watch) watch_live ;;
   *) usage; exit 1 ;;
 esac
