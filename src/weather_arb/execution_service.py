@@ -22,6 +22,7 @@ class ExecutionServiceConfig:
     max_reject_rate_crit: float = 0.08
     max_reject_rate_stop: float = 0.12
     max_consecutive_rejected_stop: int = 5
+    min_samples_for_rate_stop: int = 10  # reject_rate 触发 hard_stop 的最小样本量
     min_order_notional: float = 1.0  # Polymarket min size $1
 
 
@@ -129,7 +130,8 @@ class ExecutionService:
     def risk_flags(self, minutes: int = 5) -> dict[str, bool | float | int]:
         s = self.store.stats_last_minutes(minutes)
         reject_rate = float(s["reject_rate"])
-        hard_stop = reject_rate >= self.cfg.max_reject_rate_stop or self._consecutive_rejected >= self.cfg.max_consecutive_rejected_stop
+        rate_stop = reject_rate >= self.cfg.max_reject_rate_stop and int(s["total"]) >= self.cfg.min_samples_for_rate_stop
+        hard_stop = rate_stop or self._consecutive_rejected >= self.cfg.max_consecutive_rejected_stop
         if hard_stop:
             print(f"[exec] hard_stop triggered: reject_rate={reject_rate:.2%} consecutive_rejected={self._consecutive_rejected}", flush=True)
         return {
