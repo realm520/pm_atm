@@ -130,7 +130,7 @@ class ExecutionService:
     def risk_flags(self, minutes: int = 5) -> dict[str, bool | float | int]:
         s = self.store.stats_last_minutes(minutes)
         reject_rate = float(s["reject_rate"])
-        rate_stop = reject_rate >= self.cfg.max_reject_rate_stop and int(s["total"]) >= self.cfg.min_samples_for_rate_stop
+        rate_stop = reject_rate >= self.cfg.max_reject_rate_stop and s["total"] >= self.cfg.min_samples_for_rate_stop
         hard_stop = rate_stop or self._consecutive_rejected >= self.cfg.max_consecutive_rejected_stop
         if hard_stop:
             print(f"[exec] hard_stop triggered: reject_rate={reject_rate:.2%} consecutive_rejected={self._consecutive_rejected}", flush=True)

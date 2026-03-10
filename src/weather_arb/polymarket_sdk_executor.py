@@ -101,7 +101,7 @@ class PolymarketSdkExecutor(ExchangeExecutionPort):
                 print(f"[executor] place_order SKIPPED (orderbook gone): {self._fmt_intent(intent)} err={exc}", flush=True)
                 return "", OrderStatus.FAILED, str(exc)
             # FAK/FOK killed due to no liquidity — market condition, not a trading error
-            if "no orders found to match" in err_str or "fak" in err_str or "fok" in err_str:
+            if "no orders found to match" in err_str or "killed if no match" in err_str:
                 print(f"[executor] place_order SKIPPED (no liquidity): {self._fmt_intent(intent)} err={exc}", flush=True)
                 return "", OrderStatus.FAILED, str(exc)
             # Real API rejection — counts toward reject_rate
