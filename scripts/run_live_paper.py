@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 from pathlib import Path
 from typing import Any, TypeVar
+
+import requests
 
 from weather_arb.engine import EngineConfig, PaperArbEngine
 from weather_arb.execution import ExecutionConfig
@@ -14,7 +17,7 @@ from weather_arb.exchange_sim import SimExchangeExecutor
 from weather_arb.live import LivePaperRunner, LiveRunnerConfig, run_async
 from weather_arb.order_store import SqliteOrderStore
 from weather_arb.polymarket import PolymarketClient
-from weather_arb.polymarket_account import PolymarketAccountManager
+from weather_arb.polymarket_account import PolymarketAccount, PolymarketAccountManager
 from weather_arb.polymarket_executor import PolymarketExecutionConfig, PolymarketLiveExecutor
 from weather_arb.polymarket_sdk_executor import PolymarketSdkExecutor
 from weather_arb.realtime import PollingMarketStreamer, PolymarketWSStreamer, RealtimeConfig, WebSocketMarketStreamer
@@ -25,6 +28,71 @@ from weather_arb.weather_provider import OpenMeteoConfig, OpenMeteoMultiModelPro
 
 
 T = TypeVar("T")
+
+
+def _print_startup_account_info(account: PolymarketAccount) -> None:
+    """Print USDC balance and open positions to stdout at startup."""
+    funder = account.funder or account.wallet_address
+    if not funder:
+        return
+
+    def _fetch_balance() -> float | None:
+        try:
+            r = requests.get(
+                "https://clob.polymarket.com/balance-allowance",
+                params={"asset_type": "COLLATERAL"},
+                headers={"POLY_ADDRESS": funder},
+                timeout=10,
+            )
+            r.raise_for_status()
+            return float(r.json().get("balance") or 0)
+        except Exception as exc:
+            print(f"[startup] balance fetch failed (non-fatal): {exc}", flush=True)
+            return None
+
+    def _fetch_positions() -> list[dict]:
+        try:
+            r = requests.get(
+                "https://data-api.polymarket.com/positions",
+                params={"user": funder, "sizeThreshold": 0.01, "limit": 500},
+                timeout=15,
+            )
+            r.raise_for_status()
+            return r.json() or []
+        except Exception as exc:
+            print(f"[startup] positions fetch failed (non-fatal): {exc}", flush=True)
+            return []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        bal_fut = pool.submit(_fetch_balance)
+        pos_fut = pool.submit(_fetch_positions)
+        usdc_balance = bal_fut.result()
+        positions: list[dict] = pos_fut.result()
+
+    # 计算持仓市值
+    total_position_value = sum(
+        float(p.get("curPrice") or 0) * float(p.get("size") or 0)
+        for p in positions
+    )
+    total_cost = sum(float(p.get("initialValue") or 0) for p in positions)
+
+    print("=" * 60, flush=True)
+    print("[startup] ── Account Snapshot ──", flush=True)
+    if usdc_balance is not None:
+        print(f"  USDC balance  : ${usdc_balance:.2f}", flush=True)
+    print(f"  Open positions: {len(positions)}", flush=True)
+    print(f"  Position cost : ${total_cost:.2f}", flush=True)
+    print(f"  Position value: ${total_position_value:.2f}  (at current prices)", flush=True)
+    if positions:
+        print("  Top positions:", flush=True)
+        for p in sorted(positions, key=lambda x: float(x.get("size", 0) or 0) * float(x.get("curPrice", 0) or 0), reverse=True)[:10]:
+            size = float(p.get("size") or 0)
+            cur = float(p.get("curPrice") or 0)
+            avg = float(p.get("avgPrice") or 0)
+            pnl = float(p.get("cashPnl") or 0)
+            title = str(p.get("title") or p.get("asset") or "")[:40]
+            print(f"    {title:<40} size={size:.2f} avg={avg:.3f} cur={cur:.3f} pnl=${pnl:.2f}", flush=True)
+    print("=" * 60, flush=True)
 
 
 def _load_json(path: str) -> dict[str, Any]:
@@ -158,6 +226,9 @@ def main() -> None:
     with open(args.run_meta, "w", encoding="utf-8") as f:
         json.dump(run_meta, f, ensure_ascii=False, indent=2)
 
+    account = None   # PolymarketAccount, 仅 live-sdk 模式下设置
+    private_key = ""  # 仅 live-sdk 模式下设置
+
     execution_service = None
     if args.execution_mode in {"live", "live-sim", "live-sdk"}:
         print(f"[startup] execution_mode={args.execution_mode}, initializing order store at {args.orders_db}", flush=True)
@@ -285,6 +356,25 @@ def main() -> None:
                 print(f"[startup] position snapshot failed (non-fatal): {_exc}", flush=True)
         else:
             print("[startup] position bootstrap skipped (paper mode or executor does not support get_positions_snapshot)", flush=True)
+
+        # ── 启动余额 + 持仓快照 + 历史成交统计注入 ────────────────────────
+        if account is not None:
+            _print_startup_account_info(account)
+            if private_key:
+                from weather_arb.trade_history import TradeHistoryCache
+                from weather_arb.polymarket_direct_trader import PolymarketDirectTrader
+                _cache = TradeHistoryCache(cache_path="state/trade_history_cache.json")
+                print("[startup] refreshing trade history cache...", flush=True)
+                _, _hist_stats = _cache.refresh(PolymarketDirectTrader(), account, private_key)
+                runner.load_trade_history_stats(_hist_stats)
+                print(
+                    f"[startup] historical stats: n_trades={_hist_stats.n_completed_trades}"
+                    f" realized_pnl={_hist_stats.realized_pnl:.4f}"
+                    f" n_winning={_hist_stats.n_winning_trades}"
+                    + (f" win_rate={_hist_stats.n_winning_trades/_hist_stats.n_completed_trades:.1%}"
+                       if _hist_stats.n_completed_trades else ""),
+                    flush=True,
+                )
 
         ws_url = args.ws_url or "wss://ws-subscriptions-clob.polymarket.com/ws/market"
         subscribe_message = json.loads(args.subscribe_json) if args.subscribe_json else None
