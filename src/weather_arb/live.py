@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 import time
 from typing import Any, Protocol
+
 import traceback
 
 import pandas as pd
@@ -13,6 +14,7 @@ import requests
 
 from .engine import PaperArbEngine
 from .orders import ExecutionIntent, OrderRecord, OrderSide, UNFILLED_TERMINAL_STATUSES
+from .trade_history import HistoricalStats
 
 
 class ForecastProvider(Protocol):
@@ -106,6 +108,8 @@ class LivePaperRunner:
         self.live_positions: dict[str, dict[str, Any]] = {}
         self.realized_pnl: float = 0.0
         self.n_completed_trades: int = 0
+        self.session_n_winning_trades: int = 0  # 本 session 盈利成交数
+        self._hist_stats: HistoricalStats = HistoricalStats.zero()  # 历史基数，启动时注入
         self.event_latest_price: dict[str, float] = {}
         self.event_midprice: dict[str, float] = {}  # (bestBid+bestAsk)/2，WS 每 tick 更新
         self.execution_submitted_keys: set[str] = set()
@@ -117,6 +121,21 @@ class LivePaperRunner:
         self.runtime_error_count = 0
         self._halted = False
         self._last_alert_at: dict[str, pd.Timestamp] = {}
+
+    def load_trade_history_stats(self, stats: HistoricalStats) -> None:
+        """Inject historical P&L base from trade cache (call once after refresh at startup)."""
+        self._hist_stats = stats
+        if stats.n_completed_trades:
+            win_rate = stats.n_winning_trades / stats.n_completed_trades
+            self._safe_print(
+                f"[live] historical stats loaded: n_trades={stats.n_completed_trades}"
+                f" realized_pnl={stats.realized_pnl:.4f} win_rate={win_rate:.1%}"
+            )
+        else:
+            self._safe_print(
+                f"[live] historical stats loaded: n_trades=0"
+                f" realized_pnl={stats.realized_pnl:.4f} (no completed trades yet)"
+            )
 
     async def _normalize_tick(self, tick: dict[str, Any]) -> dict[str, Any] | None:
         self._raw_tick_attempts += 1
@@ -156,13 +175,12 @@ class LivePaperRunner:
             self.event_latest_asset_id[event_id_str] = str(asset_id)
         self.event_latest_price[event_id_str] = float(market_prob)
 
-        best_bid = tick.get("bestBid") if tick.get("bestBid") is not None else tick.get("best_bid")
-        best_ask = tick.get("bestAsk") if tick.get("bestAsk") is not None else tick.get("best_ask")
+        best_bid, best_ask = self._bid_ask(tick)
         if best_bid is not None and best_ask is not None:
             self.event_midprice[event_id_str] = (float(best_bid) + float(best_ask)) / 2.0
         else:
-            # WS 尚未推送挂单数据时，用 lastTradePrice 作为临时 midprice
-            self.event_midprice.setdefault(event_id_str, float(market_prob))
+            # 没有 bestBid/bestAsk 时，用 lastTradePrice 作为 midprice（每 tick 更新，不用 setdefault）
+            self.event_midprice[event_id_str] = float(market_prob)
 
         market_question = tick.get("market_question") or tick.get("question") or tick.get("title") or ""
 
@@ -288,9 +306,16 @@ class LivePaperRunner:
     def _clamp_price(v: float) -> float:
         return min(0.99, max(0.01, float(v)))
 
+    @staticmethod
+    def _bid_ask(tick: dict[str, Any]) -> tuple[float | None, float | None]:
+        """Extract bestBid/bestAsk from tick, handling camelCase and snake_case field names."""
+        bid = tick.get("bestBid") if tick.get("bestBid") is not None else tick.get("best_bid")
+        ask = tick.get("bestAsk") if tick.get("bestAsk") is not None else tick.get("best_ask")
+        return (float(bid) if bid is not None else None,
+                float(ask) if ask is not None else None)
+
     def _limit_price_from_tick(self, tick: dict[str, Any], *, side: OrderSide, action: str, fallback: float) -> float:
-        best_bid = tick.get("bestBid") or tick.get("best_bid")
-        best_ask = tick.get("bestAsk") or tick.get("best_ask")
+        best_bid, best_ask = self._bid_ask(tick)
         b = self.cfg.entry_price_buffer if action == "entry" else self.cfg.exit_price_buffer
 
         try:
@@ -329,7 +354,7 @@ class LivePaperRunner:
         # Polymarket SDK rounds price to 2 decimal places (1-cent tick);
         # use rounded price for notional check to avoid false-pass (e.g. 0.013→0.01).
         effective_price = round(clamped_price, 2)
-        # 入场专属校验：min_notional bump + order book 深度检查（FOK 必须全量可成交）
+        # 入场专属校验：min_notional bump + 价差过滤
         if action == "entry":
             if effective_price * clamped_qty < self._MIN_ORDER_NOTIONAL:
                 clamped_qty = float(math.ceil(self._MIN_ORDER_NOTIONAL / effective_price))
@@ -337,38 +362,22 @@ class LivePaperRunner:
                     "execution_qty_bumped",
                     {"event_id": event_id, "original_qty": qty, "bumped_qty": clamped_qty, "price": clamped_price},
                 )
-            if tick is not None:
-                size_key = "bestAskSize" if side == OrderSide.BUY else "bestBidSize"
-                raw_size = tick.get(size_key)
-                available_size = float(raw_size) if raw_size is not None else None
-                if available_size is not None and available_size < clamped_qty:
-                    self._append_alert(
-                        "warning",
-                        "execution_skip_insufficient_depth",
-                        f"skip entry {event_id}: need qty={clamped_qty} but {size_key}={available_size} (price={clamped_price})",
-                    )
-                    self._append_event(
-                        "execution_skip",
-                        {"reason": "insufficient_depth", "event_id": event_id, "size_key": size_key, "available": available_size, "required": clamped_qty},
-                    )
-                    return None
-                # 价差过滤：买卖价差过宽说明流动性差，跳过入场
-                if self.cfg.max_entry_spread > 0:
-                    raw_bid = tick.get("bestBid") if tick.get("bestBid") is not None else tick.get("best_bid")
-                    raw_ask = tick.get("bestAsk") if tick.get("bestAsk") is not None else tick.get("best_ask")
-                    if raw_bid is not None and raw_ask is not None:
-                        spread = float(raw_ask) - float(raw_bid)
-                        if spread > self.cfg.max_entry_spread:
-                            self._append_alert(
-                                "warning",
-                                "execution_skip_wide_spread",
-                                f"skip entry {event_id}: spread={spread:.4f} > max={self.cfg.max_entry_spread} (bid={raw_bid} ask={raw_ask})",
-                            )
-                            self._append_event(
-                                "execution_skip",
-                                {"reason": "wide_spread", "event_id": event_id, "spread": round(spread, 4), "bid": raw_bid, "ask": raw_ask, "max_spread": self.cfg.max_entry_spread},
-                            )
-                            return None
+            # 价差过滤：买卖价差过宽说明流动性差，跳过入场
+            if tick is not None and self.cfg.max_entry_spread > 0:
+                raw_bid, raw_ask = self._bid_ask(tick)
+                if raw_bid is not None and raw_ask is not None:
+                    spread = float(raw_ask) - float(raw_bid)
+                    if spread > self.cfg.max_entry_spread:
+                        self._append_alert(
+                            "warning",
+                            "execution_skip_wide_spread",
+                            f"skip entry {event_id}: spread={spread:.4f} > max={self.cfg.max_entry_spread} (bid={raw_bid} ask={raw_ask})",
+                        )
+                        self._append_event(
+                            "execution_skip",
+                            {"reason": "wide_spread", "event_id": event_id, "spread": round(spread, 4), "bid": raw_bid, "ask": raw_ask, "max_spread": self.cfg.max_entry_spread},
+                        )
+                        return None
 
         intent = ExecutionIntent(
             event_id=event_id,
@@ -556,7 +565,12 @@ class LivePaperRunner:
         if entry_coid and self.execution_service is not None:
             entry_order = self.execution_service.get_order_by_client_id(entry_coid)
             if entry_order is not None:
-                if entry_order.status in UNFILLED_TERMINAL_STATUSES:
+                if entry_order.filled_qty > 0:
+                    # FAK 部分成交或全量成交：以实际成交量作为持仓大小
+                    pos["entry_client_order_id"] = None
+                    pos["size"] = entry_order.filled_qty
+                elif entry_order.status in UNFILLED_TERMINAL_STATUSES:
+                    # 终态且零成交：入场彻底失败，清除持仓并冷却
                     self._append_event(
                         "execution_skip",
                         {
@@ -567,14 +581,12 @@ class LivePaperRunner:
                         },
                     )
                     self._safe_print(
-                        f"[live][warning] skip exit {event_id}: entry order {entry_coid} status={entry_order.status}, no tokens to sell"
+                        f"[live][warning] skip exit {event_id}: entry order {entry_coid} status={entry_order.status}, no tokens filled"
                     )
                     self.live_positions.pop(event_id, None)
                     self.entry_failed_cooldown[event_id] = time.monotonic()
                     return
-                # 入场已确认活跃/成交，从 filled_qty 更新实际持仓量
-                pos["entry_client_order_id"] = None
-                pos["size"] = entry_order.filled_qty if entry_order.filled_qty > 0 else pos.get("size")
+                # 否则订单仍在途（NEW/PENDING），保留 entry_client_order_id 下次继续查询
 
         size = pos.get("size")
         if size is None or size <= 0:
@@ -594,6 +606,8 @@ class LivePaperRunner:
             return
         self.realized_pnl += gross * qty
         self.n_completed_trades += 1
+        if gross > 0:
+            self.session_n_winning_trades += 1
         self._record_exit_trade(event_id, pos, gross, qty, cur.get("ts") or row.get("ts"))
         self._submit_execution_intent(
             event_id=event_id,
@@ -848,23 +862,30 @@ class LivePaperRunner:
 
             self._check_execution_health()
 
-            n_trades = self.n_completed_trades
-            avg_pnl = self.realized_pnl / n_trades if n_trades else 0.0
+            # 汇总：历史基数 + 本 session 新增
+            h = self._hist_stats
+            n_trades_total = h.n_completed_trades + self.n_completed_trades
+            realized_total = h.realized_pnl + realized
+            n_winning_total = h.n_winning_trades + self.session_n_winning_trades
+            avg_pnl = realized_total / n_trades_total if n_trades_total else 0.0
+            win_rate = n_winning_total / n_trades_total if n_trades_total else 0.0
+            total_pnl_all = realized_total + unrealized
             self._append_summary_row(
                 row["event_id"],
                 {
-                    "n_trades": n_trades,
+                    "n_trades": n_trades_total,
                     "open_positions": len(self.live_positions),
-                    "total_pnl": total_pnl,
+                    "total_pnl": total_pnl_all,
                     "avg_pnl": avg_pnl,
-                    "win_rate": 0.0,
+                    "win_rate": win_rate,
                 },
                 0,
             )
 
             self._safe_print(
                 f"[live] ticks={self.tick_count} "
-                f"realized={realized:.4f} unrealized={unrealized:.4f} total_pnl={total_pnl:.4f} "
+                f"realized={realized_total:.4f} unrealized={unrealized:.4f} total_pnl={total_pnl_all:.4f} "
+                f"n_trades={n_trades_total} win_rate={win_rate:.1%} "
                 f"open_positions={len(self.live_positions)}"
             )
         except CircuitBreakerTriggered:

@@ -13,7 +13,7 @@ from .polymarket_utils import sanitize_order_amounts
 
 @dataclass(frozen=True)
 class PolymarketSdkExecutorConfig:
-    entry_order_type: str = "FOK"  # 入场：全成交或立即取消，不产生挂单
+    entry_order_type: str = "FAK"  # 入场：部分成交也可，剩余自动取消，不产生挂单
     exit_order_type: str = "FAK"   # 退出：部分成交也可，剩余自动取消
 
 
