@@ -94,12 +94,18 @@ class PolymarketSdkExecutor(ExchangeExecutionPort):
             print(f"[executor] place_order submitted: order_id={oid} {self._fmt_intent(intent)} actual_price={price} actual_size={size} status={st}", flush=True)
             return oid, st, ""
         except PolyApiException as exc:
-            # Orderbook closed/delisted — not a real reject; use FAILED to exclude from reject_rate
             err_msg = exc.error_msg if isinstance(exc.error_msg, dict) else {}
-            if "does not exist" in str(err_msg.get("error", "")).lower():
+            err_str = str(err_msg.get("error", "")).lower()
+            # Orderbook closed/delisted — market condition, not a trading error
+            if "does not exist" in err_str:
                 print(f"[executor] place_order SKIPPED (orderbook gone): {self._fmt_intent(intent)} err={exc}", flush=True)
                 return "", OrderStatus.FAILED, str(exc)
-            print(f"[executor] place_order FAILED: {self._fmt_intent(intent)} err={exc}", flush=True)
+            # FAK/FOK killed due to no liquidity — market condition, not a trading error
+            if "no orders found to match" in err_str or "fak" in err_str or "fok" in err_str:
+                print(f"[executor] place_order SKIPPED (no liquidity): {self._fmt_intent(intent)} err={exc}", flush=True)
+                return "", OrderStatus.FAILED, str(exc)
+            # Real API rejection — counts toward reject_rate
+            print(f"[executor] place_order REJECTED: {self._fmt_intent(intent)} err={exc}", flush=True)
             return "", OrderStatus.REJECTED, str(exc)
         except Exception as exc:
             print(f"[executor] place_order FAILED: {self._fmt_intent(intent)} err={exc}", flush=True)
