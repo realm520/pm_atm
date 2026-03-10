@@ -67,6 +67,7 @@ class LiveRunnerConfig:
     entry_failed_cooldown_sec: float = 300.0  # FOK 失败后冷却时长，超时自动解锁
     max_open_positions: int = 0       # 0 = 不限；runner 层持仓数硬上限
     max_capital_deployed: float = 0.0  # 0 = 不限；runner 层已部署名义资金上限（USDC）
+    max_entry_spread: float = 0.10    # 入场最大允许买卖价差；0 = 不限
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_thread_id: int = 0
@@ -351,6 +352,23 @@ class LivePaperRunner:
                         {"reason": "insufficient_depth", "event_id": event_id, "size_key": size_key, "available": available_size, "required": clamped_qty},
                     )
                     return None
+                # 价差过滤：买卖价差过宽说明流动性差，跳过入场
+                if self.cfg.max_entry_spread > 0:
+                    raw_bid = tick.get("bestBid") if tick.get("bestBid") is not None else tick.get("best_bid")
+                    raw_ask = tick.get("bestAsk") if tick.get("bestAsk") is not None else tick.get("best_ask")
+                    if raw_bid is not None and raw_ask is not None:
+                        spread = float(raw_ask) - float(raw_bid)
+                        if spread > self.cfg.max_entry_spread:
+                            self._append_alert(
+                                "warning",
+                                "execution_skip_wide_spread",
+                                f"skip entry {event_id}: spread={spread:.4f} > max={self.cfg.max_entry_spread} (bid={raw_bid} ask={raw_ask})",
+                            )
+                            self._append_event(
+                                "execution_skip",
+                                {"reason": "wide_spread", "event_id": event_id, "spread": round(spread, 4), "bid": raw_bid, "ask": raw_ask, "max_spread": self.cfg.max_entry_spread},
+                            )
+                            return None
 
         intent = ExecutionIntent(
             event_id=event_id,

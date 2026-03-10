@@ -317,3 +317,57 @@ def test_min_notional_bumped_when_no_depth_info(tmp_path: Path) -> None:
     )
     assert len(exec_svc.submitted) == 1
     assert exec_svc.submitted[0]["side"] == "BUY"
+
+
+def _make_runner_with_spread_limit(tmp_path, max_entry_spread: float):
+    exec_svc = DummyExecutionService(hard_stop=False)
+    runner = LivePaperRunner(
+        engine=PaperArbEngine(engine_cfg=EngineConfig(base_trade_qty=5.0)),
+        forecast_provider=StaticForecastProvider(0.99),
+        config=LiveRunnerConfig(
+            eval_every_ticks=1,
+            out_csv=str(tmp_path / "live_trades.csv"),
+            summary_csv=str(tmp_path / "live_summary.csv"),
+            events_jsonl=str(tmp_path / "events.jsonl"),
+            error_log=str(tmp_path / "errors.log"),
+            alerts_jsonl=str(tmp_path / "alerts.jsonl"),
+            hard_daily_loss_limit=-999,
+            max_entry_spread=max_entry_spread,
+        ),
+        execution_service=exec_svc,
+    )
+    runner.event_latest_asset_id["m1"] = "a1"
+
+    def fake_entry(_df):
+        out = _df.copy()
+        out["mispricing_z"] = 2.0
+        out["entry_dir"] = 1
+        return out
+
+    runner.engine.strategy.generate_signals = fake_entry  # type: ignore[method-assign]
+    return runner, exec_svc
+
+
+def test_wide_spread_skips_entry(tmp_path: Path) -> None:
+    """买卖价差超过阈值时，入场跳过。"""
+    runner, exec_svc = _make_runner_with_spread_limit(tmp_path, max_entry_spread=0.10)
+    # spread = 0.90 - 0.10 = 0.80 > 0.10
+    runner._process_execution_signals(
+        _signal_df(),
+        {"event_id": "m1", "market_prob": 0.4, "ts": "t1"},
+        {"bestBid": 0.10, "bestAsk": 0.90, "bestAskSize": 100.0},
+    )
+    assert len(exec_svc.submitted) == 0
+
+
+def test_tight_spread_allows_entry(tmp_path: Path) -> None:
+    """买卖价差在阈值内时，正常入场。"""
+    runner, exec_svc = _make_runner_with_spread_limit(tmp_path, max_entry_spread=0.10)
+    # spread = 0.41 - 0.39 = 0.02 < 0.10
+    runner._process_execution_signals(
+        _signal_df(),
+        {"event_id": "m1", "market_prob": 0.4, "ts": "t1"},
+        {"bestBid": 0.39, "bestAsk": 0.41, "bestAskSize": 100.0},
+    )
+    assert len(exec_svc.submitted) == 1
+    assert exec_svc.submitted[0]["side"] == "BUY"
