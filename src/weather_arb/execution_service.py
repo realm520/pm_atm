@@ -20,7 +20,7 @@ class ExecutionServiceConfig:
     order_timeout_sec: float = 15.0
     max_reject_rate_warn: float = 0.03
     max_reject_rate_crit: float = 0.08
-    max_reject_rate_stop: float = 0.12
+    max_reject_rate_stop: float = 0.30
     max_consecutive_rejected_stop: int = 5
     min_samples_for_rate_stop: int = 10  # reject_rate 触发 hard_stop 的最小样本量
     min_order_notional: float = 1.0  # Polymarket min size $1
