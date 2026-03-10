@@ -78,7 +78,7 @@ class OrderRecord:
 
 
 VALID_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
-    OrderStatus.PENDING_SUBMIT: {OrderStatus.NEW, OrderStatus.REJECTED, OrderStatus.FAILED},
+    OrderStatus.PENDING_SUBMIT: {OrderStatus.NEW, OrderStatus.PARTIALLY_FILLED, OrderStatus.FILLED, OrderStatus.REJECTED, OrderStatus.FAILED},
     OrderStatus.NEW: {OrderStatus.PARTIALLY_FILLED, OrderStatus.FILLED, OrderStatus.CANCEL_REQUESTED, OrderStatus.CANCELED, OrderStatus.EXPIRED, OrderStatus.REJECTED, OrderStatus.FAILED},
     OrderStatus.PARTIALLY_FILLED: {OrderStatus.PARTIALLY_FILLED, OrderStatus.FILLED, OrderStatus.CANCEL_REQUESTED, OrderStatus.CANCELED, OrderStatus.EXPIRED, OrderStatus.FAILED},
     OrderStatus.CANCEL_REQUESTED: {OrderStatus.CANCELED, OrderStatus.PARTIALLY_FILLED, OrderStatus.FILLED, OrderStatus.FAILED},
